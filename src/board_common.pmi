@@ -1,0 +1,320 @@
+; The layer every Pico shares: USB text out, the service call, the panel, core 1 (the picture), the
+; machine's loop paced to the real IIc, the USB monitor, boot. The chip's board file sets
+; #A2_CLOCK_KHZ and #A2_BOARD_NAME$ and supplies VideoBegin() and A2LaunchCore1(); the wrapper sets
+; #A2_ROM (0: this project's test ROM, 1: the private wrapper's A2RomData of #A2_ROM_BYTES) and
+; #A2_DISK (0: no disk, 1: the private wrapper's A2DiskData of kind #A2_DISK_KIND).
+;
+; THE USB MONITOR: bytes from the host are keys (A2KeyPut); $1D (Ctrl+]) then a letter is a command:
+;   s status   t the text on the screen   c capture the picture (480 x 320 RGB565)   p the CPU
+;   f full speed on/off   m monochrome on/off   r Ctrl+Reset   R power off and on   k keyboard state
+;   d disk state   o / a hold Open-Apple / Solid-Apple for the next key   v periodic status on/off
+
+Declare VideoBegin()
+Declare.i A2LaunchCore1()
+Declare A2AudioBegin(keyRecord.i)
+Declare A2AudioReport()
+
+Global Core1ParkRequest.i, Core1Parked.i, WorkerReady.i
+
+Procedure Say(*text.i)
+  Protected p.i, c.i
+  p = *text
+  c = PeekA(p) & 255
+  While c
+    UsbSerialWrite(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Protected d.i
+  If v < 0
+    UsbSerialWrite(45)
+    v = 0 - v
+  EndIf
+  d = 1
+  While v / d >= 10
+    d = d * 10
+  Wend
+  While d > 0
+    UsbSerialWrite(48 + (v / d) % 10)
+    d = d / 10
+  Wend
+EndProcedure
+
+Procedure Hex4(v.i)
+  Protected k.i, n.i
+  For k = 12 To 0 Step -4
+    n = (v >> k) & 15
+    If n < 10 : UsbSerialWrite(48 + n) : Else : UsbSerialWrite(55 + n) : EndIf
+  Next
+EndProcedure
+
+Procedure Eol()
+  UsbSerialWrite(13) : UsbSerialWrite(10)
+  UsbSerialFlush() : UsbSerialTask()
+EndProcedure
+
+Procedure A2BoardService()
+  UsbSerialTask() : SafetyPet()
+EndProcedure
+
+Procedure WaitUs(us.i)
+  Protected t.i
+  t = Micros()
+  While Micros() - t < us
+    A2BoardService()
+  Wend
+EndProcedure
+
+; ---------------------------------------------------------------- the panel and core 1
+
+Procedure VideoSendRow(y.i, pixels.i)
+  Tft796BlitRect(0, y, #PANEL_W, 1, pixels)
+EndProcedure
+
+; Core 0 asks core 1 to stop drawing (a capture over USB) and waits for it.
+Procedure A2ParkVideo(on.i)
+  Protected t.i
+  If on
+    Core1ParkRequest = 1
+    t = Micros()
+    While PeekL(@Core1Parked) = 0 And Micros() - t < 200000
+      A2BoardService()
+    Wend
+  Else
+    Core1ParkRequest = 0
+  EndIf
+EndProcedure
+
+ProcedureRAM Core1Park()
+  Core1Parked = 1
+  While PeekL(@Core1ParkRequest) : Wend
+  Core1Parked = 0
+  PanelForce = 1
+EndProcedure
+
+Procedure Core1Main()
+  WorkerReady = 1
+  Repeat
+    If PeekL(@Core1ParkRequest) : Core1Park() : EndIf
+    PanelFrame()
+  ForEver
+EndProcedure
+
+; ---------------------------------------------------------------- the disk image (flash)
+
+Global A2DiskBase.i
+
+Procedure.i DiskHostSector(drive.i, track.i, sector.i)
+  If drive <> 1 Or A2DiskBase = 0 Or track < 0 Or track >= 35 : ProcedureReturn 0 : EndIf
+  ProcedureReturn A2DiskBase + (track * 16 + sector) * 256
+EndProcedure
+Procedure.i DiskHostTrack(drive.i, track.i)
+  If drive <> 1 Or A2DiskBase = 0 Or track < 0 Or track >= 35 : ProcedureReturn 0 : EndIf
+  ProcedureReturn A2DiskBase + track * #DISK_TRACK_BYTES
+EndProcedure
+; The disk is in this program's flash image and is not written: a written sector is counted and
+; dropped (DOS reports the write as done; the change is gone at the next power on).
+Procedure.i DiskHostWrite(drive.i, track.i, sector.i, src.i)
+  ProcedureReturn 0
+EndProcedure
+Procedure.i DiskHostWriteTrack(drive.i, track.i, src.i)
+  ProcedureReturn 0
+EndProcedure
+
+; ---------------------------------------------------------------- reports over USB
+
+Global A2FullSpeed.i, A2Report.i = 1, A2Monitor.i, A2RunUs.i, A2Late.i, A2HoldApple.i
+Global A2StatFrames.i, A2StatCycles.i, A2StatAt.i, A2StatRun.i, A2StatPanel.i
+
+Procedure A2TextDump()
+  Protected r.i, c.i, cols.i
+  cols = VideoTextCols()
+  Say("TEXT_BEGIN cols=") : Num(cols) : Say(" rows=24") : Eol()
+  For r = 0 To 23
+    For c = 0 To cols - 1 : UsbSerialWrite(VideoTextChar(r, c)) : Next
+    Eol()
+  Next
+  Say("TEXT_END") : Eol()
+EndProcedure
+
+; CAP_BEGIN, 320 rows x 480 RGB565 pixels (low byte first), CAP_END: the renderer the panel gets, run
+; here on core 0 with core 1 parked.
+Procedure A2Capture()
+  Protected y.i, x.i
+  A2ParkVideo(1)
+  Say("CAP_BEGIN w=480 h=320") : Eol()
+  For y = 0 To #PANEL_H - 1
+    VideoRenderLine((y * 3) / 5)
+    PanelMapLine()
+    For x = 0 To 479
+      UsbSerialWrite(PanelOut(x) & 255) : UsbSerialWrite(PanelOut(x) >> 8)
+    Next
+    A2BoardService()
+  Next
+  Eol() : Say("CAP_END") : Eol()
+  A2ParkVideo(0)
+EndProcedure
+
+Procedure A2CpuReport()
+  Say("CPU pc=$") : Hex4(CpuPC) : Say(" a=$") : Hex4(CpuA) : Say(" x=$") : Hex4(CpuX) : Say(" y=$") : Hex4(CpuY)
+  Say(" s=$") : Hex4(CpuS) : Say(" p=$") : Hex4(CpuStatus()) : Say(" cycles=") : Num(CpuCycles)
+  Say(" irq=") : Num(CpuIrqLine) : Eol()
+  Say("SWITCHES text=") : Num(A2Text) : Say(" mixed=") : Num(A2Mixed) : Say(" page2=") : Num(A2Page2)
+  Say(" hires=") : Num(A2Hires) : Say(" dhires=") : Num(A2DHires) : Say(" col80=") : Num(A2Col80)
+  Say(" altchar=") : Num(A2AltChar) : Say(" 80store=") : Num(A2Store80) : Say(" ramrd=") : Num(A2RamRd)
+  Say(" ramwrt=") : Num(A2RamWrt) : Say(" altzp=") : Num(A2AltZp) : Say(" lcread=") : Num(A2LcRead)
+  Say(" lcwrite=") : Num(A2LcWrite) : Say(" lcbank2=") : Num(A2LcBank2) : Say(" rombank=") : Num(A2RomBank) : Eol()
+EndProcedure
+
+Procedure A2Status(now.i)
+  Protected dt.i, frames.i, cycles.i, run.i
+  dt = now - A2StatAt
+  If dt <= 1000 : ProcedureReturn : EndIf
+  frames = A2Frames - A2StatFrames
+  cycles = CpuCycles - A2StatCycles
+  run = A2RunUs - A2StatRun
+  Say("A2 frames=") : Num(A2Frames)
+  Say(" fps_x100=") : Num((frames * 100000) / (dt / 1000))
+  Say(" cpu_khz=") : Num(cycles / (dt / 1000))
+  Say(" fast=") : Num(A2FullSpeed)
+  ; the share of wall time the emulation needed: under 100 it keeps up with a real IIc
+  Say(" busy_pct=") : Num((run / (dt / 1000)) / 10)
+  Say(" pc=$") : Hex4(CpuPC)
+  Say(" panel_fps_x10=") : Num(((PanelFrames - A2StatPanel) * 10000) / (dt / 1000))
+  Say(" rows_sent=") : Num(PanelRowsSent)
+  Say(" keys=") : Num(A2KeyTyped) : Say(" queued=") : Num(A2KeyPending())
+  Say(" disk_reads=") : Num(DiskReads) : Say(" disk_writes=") : Num(DiskWrites) : Say(" track=") : Num(DiskHalf(1) >> 1)
+  Say(" clicks=") : Num(A2SpeakerClicks) : Say(" samples=") : Num(SoundSamples) : A2AudioReport()
+  Say(" late=") : Num(A2Late)
+  Eol()
+  A2StatAt = now : A2StatFrames = A2Frames : A2StatCycles = CpuCycles
+  A2StatRun = A2RunUs : A2StatPanel = PanelFrames
+EndProcedure
+
+Procedure A2MonitorCommand(c.i)
+  Select c
+    Case 115 : A2Status(Micros())   ; s
+    Case 116 : A2TextDump()   ; t
+    Case 99 : A2Capture()   ; c
+    Case 112 : A2CpuReport()   ; p
+    Case 102   ; f
+      A2FullSpeed = A2FullSpeed ! 1
+      Say("A2 full_speed=") : Num(A2FullSpeed) : Eol()
+    Case 109   ; m
+      PanelMono = PanelMono ! 1
+      Say("A2 mono=") : Num(PanelMono) : Eol()
+    Case 118 : A2Report = A2Report ! 1   ; v
+    Case 107   ; k
+      Say("KEYS typed=") : Num(A2KeyTyped) : Say(" latch=$") : Hex4(A2Key) : Say(" down=") : Num(A2KeyDown)
+      Say(" queued=") : Num(A2KeyPending()) : Say(" dropped=") : Num(A2KeyDropped) : Eol()
+    Case 100   ; d
+      Say("DISK kind=") : Num(DiskKind(1)) : Say(" motor=") : Num(DiskMotor) : Say(" drive=") : Num(DiskDrive)
+      Say(" halftrack=") : Num(DiskHalf(1)) : Say(" pos=") : Num(DiskPos) : Say(" q6=") : Num(DiskQ6) : Say(" q7=") : Num(DiskQ7)
+      Say(" mode=") : Num(DiskMode) : Say(" reads=") : Num(DiskReads) : Say(" writes=") : Num(DiskWrites)
+      Say(" dropped_writes=") : Num(DiskWriteErrors) : Say(" steps=") : Num(DiskSteps) : Eol()
+    Case 111 : A2HoldApple = 1   ; o
+    Case 97 : A2HoldApple = 2   ; a
+    Case 114   ; r
+      A2WarmReset()
+      Say("A2 Ctrl+Reset") : Eol()
+    Case 82   ; R
+      A2ColdStart() : SoundStart(CpuCycles)
+      Say("A2 power off and on") : Eol()
+  EndSelect
+EndProcedure
+
+Global A2HostByte.i
+Procedure A2HostInput()
+  While UsbSerialAvailable()
+    A2HostByte = UsbSerialRead()
+    If A2HostByte < 0 : Break : EndIf
+    If A2Monitor
+      A2Monitor = 0 : A2MonitorCommand(A2HostByte)
+    ElseIf A2HostByte = $1D
+      A2Monitor = 1
+    Else
+      A2KeyPut(A2HostByte)
+    EndIf
+  Wend
+  ; an Apple key held for the next key typed (o / a), and let go once it has been read
+  If A2HoldApple = 1 : A2OpenApple = 1 : ElseIf A2HoldApple = 2 : A2SolidApple = 1 : EndIf
+  If A2HoldApple And A2KeyPending() = 0 And (A2Key & $80) = 0 And A2KeyTyped > 0
+    A2HoldApple = 0 : A2OpenApple = 0 : A2SolidApple = 0
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- the loop
+
+; Run the machine for ever, paced to the real IIc: a frame of 17030 cycles is 16688.3 us.
+; THE PATH DOWN TO CpuRun keeps no locals (PM1126): globals only.
+Global RunDue.i, RunDueFrac.i, RunNow.i, RunStart.i, RunReport.i
+Procedure A2Run()
+  RunDue = Micros() : RunDueFrac = 0
+  RunReport = Micros() : A2StatAt = RunReport
+  Repeat
+    RunStart = Micros()
+    A2RunFrame()
+    A2RunUs = A2RunUs + Micros() - RunStart
+    A2BoardService()
+    A2HostInput()
+    RunDue = RunDue + 16688 : RunDueFrac = RunDueFrac + 3
+    If RunDueFrac >= 10 : RunDueFrac = RunDueFrac - 10 : RunDue = RunDue + 1 : EndIf
+    RunNow = Micros()
+    If A2FullSpeed
+      RunDue = RunNow
+    ElseIf RunNow - RunDue > 100000
+      A2Late = A2Late + 1 : RunDue = RunNow
+    Else
+      While Micros() - RunDue < 0
+        A2BoardService()
+      Wend
+    EndIf
+    If A2Report And RunNow - RunReport >= 5000000
+      A2Status(RunNow) : RunReport = RunNow
+    EndIf
+  ForEver
+EndProcedure
+
+Global MainT.i
+Procedure A2Boot()
+  SafetyBoot() : ClockInitKhz(#A2_CLOCK_KHZ) : TimerInit() : UsbSerialInit()
+  MainT = Micros()
+  Repeat
+    A2BoardService()
+    If UsbSerialReady() : Break : EndIf
+  Until Micros() - MainT >= 10000000
+  WaitUs(200000)
+  Say("Apple IIc PureMetal ") : Say(#A2_BOARD_NAME$) : Say(" clk_khz=") : Num(ClockSysKhz()) : Eol()
+  A2MemInit() : DiskInit() : PanelInit()
+  CompilerIf #A2_ROM = 1
+    A2Rom = ?A2RomData : A2RomBytes = #A2_ROM_BYTES
+    Say("ROM: the private build's Apple IIc ROM, ") : Num(A2RomBytes) : Say(" bytes") : Eol()
+  CompilerElse
+    A2Rom = ?A2TestRom : A2RomBytes = 16384
+    Say("ROM: this project's test ROM (no Apple code); a private build supplies the Apple IIc ROM") : Eol()
+  CompilerEndIf
+  CompilerIf #A2_DISK = 1
+    A2DiskBase = ?A2DiskData : DiskKind(1) = #A2_DISK_KIND : DiskProtect(1) = 0
+    Say("Disk: drive 1 holds the private build's disk, kind ") : Num(#A2_DISK_KIND) : Eol()
+  CompilerElse
+    Say("Disk: none") : Eol()
+  CompilerEndIf
+  VideoBegin()
+  Say("core1 launch=") : Num(A2LaunchCore1()) : Eol()
+  A2AudioBegin(#A2_BTKEY_FLASH)
+  A2ColdStart()
+  SoundStart(CpuCycles)
+  MainT = Micros()
+  Repeat
+    A2BoardService()
+    If PeekL(@WorkerReady) : Break : EndIf
+  Until Micros() - MainT >= 1000000
+EndProcedure
+
+Procedure Main()
+  A2Boot()
+  A2Run()
+EndProcedure

@@ -1,0 +1,14 @@
+; No sound output (the public firmware, and builds without the Bluetooth libraries). The speaker's
+; clicks are still counted (A2SpeakerClicks); nothing samples them.
+
+Procedure A2AudioPeer(src.i)
+EndProcedure
+
+Procedure A2AudioBegin(keyRecord.i)
+EndProcedure
+
+Procedure A2AudioPoll()
+EndProcedure
+
+Procedure A2AudioReport()
+EndProcedure

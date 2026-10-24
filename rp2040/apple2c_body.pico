@@ -1,0 +1,34 @@
+; Everything an Apple IIc build for the Pico W includes. The wrapper sets #CPU_ASM_TAIL, #A2_ROM,
+; #A2_DISK and #A2_AUDIO (1: the Bluetooth speaker libraries; a private wrapper then names the speaker
+; and supplies A2RomData / A2DiskData), then includes this file and calls Main().
+EnableExplicit
+XIncludeFile "RP2040/Lib/clocks.pico"
+XIncludeFile "RP2040/Lib/timer.pico"
+XIncludeFile "RP2040/Lib/uart.pico"
+XIncludeFile "RP2040/Lib/usb_serial.pico"
+XIncludeFile "RP2040/Lib/safety.pico"
+XIncludeFile "RP2040/Lib/spi.pico"
+XIncludeFile "RP2040/Lib/st7796.pico"
+XIncludeFile "../src/cpu65c02.pmi"
+XIncludeFile "../src/machine.pmi"
+XIncludeFile "../src/sound.pmi"
+XIncludeFile "../src/disk.pmi"
+XIncludeFile "../src/video.pmi"
+XIncludeFile "../src/font.pmi"
+XIncludeFile "../src/testrom.pmi"
+XIncludeFile "../src/video_panel.pmi"
+CompilerIf #A2_AUDIO = 1
+  XIncludeFile "RP2040/Lib/bits.pico"
+  XIncludeFile "RP2040/Lib/wiring.pico"
+  XIncludeFile "RP2040/Lib/string_out.pico"
+  XIncludeFile "RP2040/Lib/cyw43_nvram.pico"
+  XIncludeFile "RP2040/Lib/cyw43.pico"
+  XIncludeFile "RP2040/Lib/cyw43_btfw.pico"
+  XIncludeFile "RP2040/Lib/bluetooth.pico"
+  XIncludeFile "Shared/Bluetooth/sbc.pmi"
+  XIncludeFile "Shared/Bluetooth/bt_audio.pmi"
+  XIncludeFile "../src/audio_bt.pmi"
+CompilerElse
+  XIncludeFile "../src/audio_none.pmi"
+CompilerEndIf
+XIncludeFile "board.pico"

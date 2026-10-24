@@ -1,0 +1,9 @@
+; Apple IIc for the Pico 2 W (RP2350): the 65C02 core (src/cpu65c02.pmi), 128 KB, the LAFVIN ST7796
+; panel, the keyboard over USB serial. The public firmware holds no Apple code: it runs this project's
+; test ROM and has no disk and no sound. private/apple2c.picow (ignored by git) is the full machine.
+#CPU_ASM_TAIL = 1
+#A2_ROM = 0
+#A2_DISK = 0
+#A2_AUDIO = 0
+XIncludeFile "apple2c_body.pico2"
+Main()

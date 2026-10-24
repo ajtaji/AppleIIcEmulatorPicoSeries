@@ -1,0 +1,9 @@
+; Diagnostic: the public machine (this project's test ROM) with this project's own test disk in drive 1
+; (tools/make_testdisk.py writes build/testdisk_data.pmi). Key D boots it; it reads tracks 1-34.
+#CPU_ASM_TAIL = 1
+#A2_ROM = 0
+#A2_DISK = 1
+#A2_AUDIO = 0
+XIncludeFile "../../build/testdisk_data.pmi"
+XIncludeFile "../apple2c_body.pico"
+Main()

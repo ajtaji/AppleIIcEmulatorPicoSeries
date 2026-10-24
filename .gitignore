@@ -1,0 +1,22 @@
+# Apple's ROMs, disk images and the speaker's address never go in git
+private/
+*.rom
+*.ROM
+*.dsk
+*.DSK
+*.do
+*.po
+*.nib
+*.woz
+# build output
+build/
+*.uf2
+*.dbg
+*.sym
+*.sym.meta
+*.cycles.txt
+*.asm
+*.log
+*.err
+desktop/*.exe
+__pycache__/

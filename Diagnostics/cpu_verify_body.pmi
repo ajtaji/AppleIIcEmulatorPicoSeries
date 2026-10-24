@@ -1,0 +1,172 @@
+; The 65C02 core's check on the board: the single-step vectors in Diagnostics/test_data.pmi (12 of each
+; opcode from SingleStepTests' rockwell65c02 set: registers, flags, memory and cycle count), then Klaus
+; Dormann's 65C02 extended opcodes test and 6502 functional test run to their success traps, timed.
+; Everything is reported over USB serial; the program then keeps servicing USB (the next upload needs
+; no button). The board wrapper includes the chip's libraries, src/cpu65c02.pmi and test_data.pmi.
+;
+; Every procedure on the path down to CpuRun keeps its state in Globals: the core holds CpuX and
+; CpuFZ in r4 and r5 for the whole program (PM1126).
+
+Global Dim TestRam.a(65792)
+Global VCursor.i, VIndex.i, VFails.i, VN.i, VK.i, VI.i, VUsed.i, VBad.i, VOp.i, VPc.i
+Global VFpc.i, VFa.i, VFx.i, VFy.i, VFs.i, VFp.i, VCyc.i, VAddr.i
+Global KStart.i, KEnd.i, KCycles.i, KPc.i, KSame.i, KOp.i, KImage.i, KFill.i, KI.i
+Global DiagT.i
+
+Procedure.i CpuBusRead(addr.i)
+  ProcedureReturn $FF
+EndProcedure
+Procedure CpuBusWrite(addr.i, value.i)
+EndProcedure
+
+Procedure Say(*text.i)
+  Protected p.i, c.i
+  p = *text
+  c = PeekA(p) & 255
+  While c
+    UsbSerialWrite(c)
+    p = p + 1
+    c = PeekA(p) & 255
+  Wend
+EndProcedure
+
+Procedure Num(v.i)
+  Protected d.i
+  If v < 0
+    UsbSerialWrite(45)
+    v = 0 - v
+  EndIf
+  d = 1
+  While v / d >= 10
+    d = d * 10
+  Wend
+  While d > 0
+    UsbSerialWrite(48 + (v / d) % 10)
+    d = d / 10
+  Wend
+EndProcedure
+
+Procedure Hex2(v.i)
+  Protected n.i
+  n = (v >> 4) & 15
+  If n < 10 : UsbSerialWrite(48 + n) : Else : UsbSerialWrite(55 + n) : EndIf
+  n = v & 15
+  If n < 10 : UsbSerialWrite(48 + n) : Else : UsbSerialWrite(55 + n) : EndIf
+EndProcedure
+
+Procedure Eol()
+  UsbSerialWrite(13) : UsbSerialWrite(10)
+  UsbSerialFlush() : UsbSerialTask()
+EndProcedure
+
+Procedure Service()
+  UsbSerialTask() : SafetyPet()
+EndProcedure
+
+Procedure MapFlat()
+  CpuMapRead(0, 256, @TestRam(0))
+  CpuMapWrite(0, 256, @TestRam(0))
+  CpuZp = @TestRam(0)
+EndProcedure
+
+Procedure.i VB(offset.i)
+  ProcedureReturn PeekA(VCursor + offset) & 255
+EndProcedure
+
+Procedure.i VW(offset.i)
+  ProcedureReturn (PeekA(VCursor + offset) & 255) | ((PeekA(VCursor + offset + 1) & 255) << 8)
+EndProcedure
+
+Procedure RunVectors()
+  MapFlat()
+  VCursor = ?Vectors
+  VFails = 0
+  For VIndex = 0 To #VECTOR_COUNT - 1
+    VPc = VW(0)
+    CpuA = VB(2) : CpuX = VB(3) : CpuY = VB(4) : CpuS = VB(5) : CpuSetStatus(VB(6))
+    VFpc = VW(7) : VFa = VB(9) : VFx = VB(10) : VFy = VB(11) : VFs = VB(12) : VFp = VB(13) : VCyc = VB(14)
+    VN = VB(15)
+    For VI = 0 To VN - 1
+      TestRam(VW(16 + VI * 4)) = VB(18 + VI * 4)
+    Next
+    VOp = TestRam(VPc)
+    CpuPC = VPc
+    VUsed = CpuRun(1)
+    VBad = 0
+    If CpuPC <> VFpc Or CpuA <> VFa Or CpuX <> VFx Or CpuY <> VFy Or CpuS <> VFs : VBad = 1 : EndIf
+    If (CpuStatus() & $CF) <> (VFp & $CF) : VBad = VBad | 2 : EndIf
+    If VUsed <> VCyc : VBad = VBad | 4 : EndIf
+    For VI = 0 To VN - 1
+      VAddr = VW(16 + VI * 4)
+      If TestRam(VAddr) <> VB(19 + VI * 4) : VBad = VBad | 8 : EndIf
+      TestRam(VAddr) = 0
+    Next
+    If VBad
+      VFails = VFails + 1
+      If VFails <= 8
+        Say("  vector ") : Num(VIndex) : Say(" opcode $") : Hex2(VOp) : Say(" FAIL code ") : Num(VBad)
+        Say(" pc=") : Num(CpuPC) : Say("/") : Num(VFpc) : Say(" a=") : Num(CpuA) : Say("/") : Num(VFa)
+        Say(" p=") : Num(CpuStatus()) : Say("/") : Num(VFp) : Say(" cycles=") : Num(VUsed) : Say("/") : Num(VCyc)
+        Eol()
+      EndIf
+    EndIf
+    VCursor = VCursor + 16 + VN * 4
+    If (VIndex & 63) = 0 : Service() : EndIf
+  Next
+  Say("single-step vectors (rockwell65c02) ") : Num(#VECTOR_COUNT - VFails) : Say(" of ") : Num(#VECTOR_COUNT)
+  If VFails = 0 : Say(" PASS") : Else : Say(" FAIL") : EndIf
+  Eol()
+EndProcedure
+
+; Klaus Dormann image: $0000-$3FFF, then $FFF0-$FFFF, then the fill byte for the rest.
+Procedure LoadKlaus(image.i)
+  KFill = PeekA(image + $4010) & 255
+  For KI = 0 To $3FFF : TestRam(KI) = PeekA(image + KI) : Next
+  For KI = $4000 To $FFEF : TestRam(KI) = KFill : Next
+  For KI = 0 To 15 : TestRam($FFF0 + KI) = PeekA(image + $4000 + KI) : Next
+EndProcedure
+
+Procedure RunKlaus(image.i, success.i)
+  MapFlat()
+  LoadKlaus(image)
+  CpuPC = $400 : CpuS = $FF : CpuSetStatus($04) : CpuA = 0 : CpuX = 0 : CpuY = 0
+  KCycles = 0
+  KStart = Micros()
+  Repeat
+    KCycles = KCycles + CpuRun(20000)
+    Service()
+    KOp = TestRam(CpuPC)
+    KSame = 0
+    If KOp = $4C And (TestRam(CpuPC + 1) | (TestRam(CpuPC + 2) << 8)) = CpuPC : KSame = 1 : EndIf
+    If ((KOp & $1F) = $10 Or KOp = $80) And TestRam(CpuPC + 1) = $FE : KSame = 1 : EndIf
+    If KSame
+      KPc = CpuPC
+      KCycles = KCycles + CpuRun(1)
+      If CpuPC = KPc : Break : EndIf
+    EndIf
+  Until KCycles > 200000000
+  KEnd = Micros()
+  Say(" PC=$") : Hex2(CpuPC >> 8) : Hex2(CpuPC & 255)
+  If CpuPC = success : Say(" PASS") : Else : Say(" FAIL") : EndIf
+  Say(" cycles=") : Num(KCycles) : Say(" us=") : Num(KEnd - KStart)
+  Say(" khz=") : Num(KCycles / ((KEnd - KStart) / 1000)) : Eol()
+EndProcedure
+
+Procedure Main()
+  SafetyBoot() : ClockInitKhz(#DIAG_CLOCK_KHZ) : TimerInit() : UsbSerialInit()
+  DiagT = Micros()
+  Repeat
+    Service()
+    If UsbSerialReady() : Break : EndIf
+  Until Micros() - DiagT >= 10000000
+  DiagT = Micros()
+  While Micros() - DiagT < 300000 : Service() : Wend
+  Say("Apple IIc 65C02 core check, ") : Say(#DIAG_BOARD$) : Say(" clk_khz=") : Num(ClockSysKhz()) : Eol()
+  RunVectors()
+  Say("Klaus 65C02 extended opcodes test") : RunKlaus(?KlausC02, $24F1)
+  Say("Klaus 6502 functional test") : RunKlaus(?Klaus02, $3469)
+  Say("verification complete") : Eol()
+  Repeat
+    Service()
+  ForEver
+EndProcedure

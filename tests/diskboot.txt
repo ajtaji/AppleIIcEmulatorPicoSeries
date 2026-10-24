@@ -1,0 +1,11 @@
+# The drive on the board without Apple code: this project's test disk booted by the test ROM's own
+# reader, all 544 sectors of tracks 1-34 read and checked. Full speed, so it takes seconds, not a minute.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+cmd f
+type D
+screen 60 544 SECTORS PASS
+cmd d
+cmd f
+cmd s
+capture build/board_diskboot.png

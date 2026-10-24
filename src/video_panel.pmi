@@ -1,0 +1,69 @@
+; The Apple IIc picture on the LAFVIN ST7796 panel (480 x 320, RGB565), drawn by core 1.
+;
+; WIDTH: a line is 560 dots (video.pmi). 40-column text is laid out as 12 pixels a character (the
+; character's six lit columns, each two pixels wide; the seventh column is always blank and is the one
+; left out), 80-column text as 6 pixels a character (the same column left out); everything else takes
+; 6 pixels from every 7 dots, so no colour or line ever disappears completely.
+; HEIGHT: 192 lines on 320 rows, 5 rows for every 3 lines (1, 2, 2).
+; A line is drawn and sent only when VideoLineHash says what it shows changed: a still screen costs
+; neither core 1 nor the SPI anything.
+
+#PANEL_W = 480
+#PANEL_H = 320
+
+Global Dim PanelOut.u(480)
+Global Dim PanelPal.u(16)
+Global Dim PanelMap40.u(480)
+Global Dim PanelMap80.u(480)
+Global Dim PanelHash.l(192)
+Global Dim PanelRowFirst.u(193)
+Global PanelForce.i = 1, PanelFrames.i, PanelRowsSent.i, PanelMono.i
+
+Declare VideoSendRow(y.i, pixels.i)
+Declare A2AudioPoll()
+
+Procedure PanelInit()
+  Protected i.i, c.i, r.i, g.i, b.i
+  For i = 0 To 15
+    c = PeekL(?A2Palette + i * 4)
+    r = (c >> 16) & 255 : g = (c >> 8) & 255 : b = c & 255
+    PanelPal(i) = ((r & $F8) << 8) | ((g & $FC) << 3) | (b >> 3)
+  Next
+  For i = 0 To 479
+    PanelMap40(i) = (i / 12) * 14 + (i % 12)
+    PanelMap80(i) = (i * 7) / 6
+  Next
+  For i = 0 To 192 : PanelRowFirst(i) = (i * 5) / 3 : Next
+  PanelForce = 1
+EndProcedure
+
+; VDots -> PanelOut through the map the line's mode needs.
+Procedure PanelMapLine()
+  Protected x.i
+  If VMode = #VM_TEXT40
+    For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap40(x))) : Next
+  Else
+    For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap80(x))) : Next
+  EndIf
+EndProcedure
+
+; One pass over the picture (core 1): draw and send the lines that changed.
+Global PfLine.i, PfHash.l, PfRow.i, PfForce.i
+Procedure PanelFrame()
+  PfForce = PanelForce : PanelForce = 0
+  If PanelMono <> VMono : VMono = PanelMono : PfForce = 1 : EndIf
+  For PfLine = 0 To 191
+    PfHash = VideoLineHash(PfLine)
+    If PfForce Or PfHash <> PanelHash(PfLine)
+      PanelHash(PfLine) = PfHash
+      VideoRenderLine(PfLine)
+      PanelMapLine()
+      For PfRow = PanelRowFirst(PfLine) To PanelRowFirst(PfLine + 1) - 1
+        VideoSendRow(PfRow, @PanelOut(0))
+        PanelRowsSent = PanelRowsSent + 1
+      Next
+    EndIf
+    A2AudioPoll()
+  Next
+  PanelFrames = PanelFrames + 1
+EndProcedure

@@ -1,0 +1,38 @@
+# The public firmware (this project's test ROM): the soft switch checks, then every video mode
+# captured from the board's own renderer, the speaker, and keys typed over USB.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+capture build/board_text.png
+type 1
+wait 1
+type A
+wait 1
+capture build/board_chars.png
+type 2
+wait 2
+screen 5 Eighty columns: even ones
+capture build/board_80col.png
+type 3
+wait 2
+capture build/board_lores.png
+type 4
+wait 2
+capture build/board_hires.png
+type 5
+wait 2
+capture build/board_dhires.png
+type 6
+wait 2
+capture build/board_mixed.png
+type 7
+wait 2
+capture build/board_dlores.png
+type B
+wait 1
+cmd s
+expect 5 clicks=[1-9]
+type Z
+wait 1
+screen 5 KEY Z \$DA
+cmd p
+cmd s

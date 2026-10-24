@@ -1,0 +1,19 @@
+; Pico W (RP2040): the LAFVIN ST7796 kit as the NES and CoCo 3 emulators use it (SPI0 GP2/GP3 at
+; 100 MHz, CS GP5, DC GP6, RST GP7), landscape 480 x 320; 200 MHz. The rest is src/board_common.pmi.
+
+#A2_CLOCK_KHZ = 200000
+#A2_BOARD_NAME$ = "Pico W"
+; The speaker link key the NES firmware keeps ("BTK1", last flash sector), read only.
+#A2_BTKEY_FLASH = $101FF000
+
+Procedure VideoBegin()
+  SpiPeriFromSys(200000)
+  SpiBegin(0, 2, 3, -1, 100000)
+  Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
+EndProcedure
+
+Procedure.i A2LaunchCore1()
+  ProcedureReturn multicore_launch()
+EndProcedure
+
+XIncludeFile "../src/board_common.pmi"

@@ -1,0 +1,435 @@
+; Apple IIc: memory (128 KB, main and auxiliary), the IIe/IIc soft switches, the language card, the
+; keyboard, the speaker click, the IOU's video switches and VBL, the ROM (16 KB, or 32 KB in two banks
+; switched at $C028) and the I/O page. Chip-independent and host-independent: the same file is the
+; Pico's machine and the desktop's (tools/port_desktop.py copies it). No board register is touched here.
+;
+; THE CPU is src/cpu65c02.pmi. It reaches memory through its page tables (CpuRdMap / CpuWrMap), which
+; A2Map fills from the switches; page $C0 is I/O and comes here through CpuBusRead / CpuBusWrite.
+;
+; MEMORY. Each bank (main = 0, auxiliary = 1) is eight 8 KB blocks, not one 64 KB array: on the Pico W
+; no run of SRAM that long is left once the core's code is placed, and blocks fill the holes.
+;   blocks 0-5   $0000-$BFFF
+;   block  6     the language card's $D000-$DFFF: bank 1 at +$0000, bank 2 at +$1000
+;   block  7     the language card's $E000-$FFFF
+; A2Block(bank * 8 + n) is the host address of block n of that bank.
+;
+; Sources: Apple IIc Technical Reference Manual (2nd ed.) and Apple IIe Technical Reference Manual
+; (soft switch tables, the language card, the IOU); MAME src/mame/apple/apple2e.cpp (BSD-3-Clause; read,
+; not copied) for the IIc's $C028 ROM switch and IOUDIS behaviour.
+
+#A2_FRAME_CYCLES = 17030                 ; 262 lines of 65 cycles: 59.92 frames a second
+#A2_LINE_CYCLES = 65
+#A2_VBL_CYCLE = 12480                    ; line 192 starts the vertical blank
+
+Global Dim A2Ram0.a(8192)
+Global Dim A2Ram1.a(8192)
+Global Dim A2Ram2.a(8192)
+Global Dim A2Ram3.a(8192)
+Global Dim A2Ram4.a(8192)
+Global Dim A2Ram5.a(8192)
+Global Dim A2Ram6.a(8192)
+Global Dim A2Ram7.a(8192)
+Global Dim A2Ram8.a(8192)
+Global Dim A2Ram9.a(8192)
+Global Dim A2Ram10.a(8192)
+Global Dim A2Ram11.a(8192)
+Global Dim A2Ram12.a(8192)
+Global Dim A2Ram13.a(8192)
+Global Dim A2Ram14.a(8192)
+Global Dim A2Ram15.a(8192)
+Global Dim A2Block.i(16)
+
+Global A2Rom.i, A2RomBytes.i, A2RomBank.i ; the ROM image (host address), 16384 or 32768, the bank shown
+
+; Soft switches, 0 or 1.
+Global A2Store80.i, A2RamRd.i, A2RamWrt.i, A2AltZp.i, A2Col80.i, A2AltChar.i
+Global A2Text.i = 1, A2Mixed.i, A2Page2.i, A2Hires.i, A2DHires.i, A2IouDis.i = 1
+Global A2LcRead.i, A2LcWrite.i, A2LcBank2.i = 1, A2LcPrewrite.i
+Global A2VblEnable.i, A2VblFlag.i
+
+; Keyboard: A2Key is the $C000 latch (bit 7 = a key is waiting), A2KeyDown the any-key-down flag.
+Global A2Key.i, A2KeyDown.i, A2OpenApple.i, A2SolidApple.i
+
+; Time: cycles since the start of the frame, and the frame count.
+Global A2FrameCycle.i, A2Frames.i
+Global A2SpeakerClicks.i
+Global VMono.i, VFlash.i                 ; the video's monochrome switch; the flashing characters' phase
+
+Declare A2SpeakerClick()
+Declare.i DiskIo(addr.i, value.i, isWrite.i)
+
+; ---------------------------------------------------------------- the memory map
+
+Procedure A2MemInit()
+  Protected i.i
+  A2Block(0) = @A2Ram0(0) : A2Block(1) = @A2Ram1(0) : A2Block(2) = @A2Ram2(0) : A2Block(3) = @A2Ram3(0)
+  A2Block(4) = @A2Ram4(0) : A2Block(5) = @A2Ram5(0) : A2Block(6) = @A2Ram6(0) : A2Block(7) = @A2Ram7(0)
+  A2Block(8) = @A2Ram8(0) : A2Block(9) = @A2Ram9(0) : A2Block(10) = @A2Ram10(0) : A2Block(11) = @A2Ram11(0)
+  A2Block(12) = @A2Ram12(0) : A2Block(13) = @A2Ram13(0) : A2Block(14) = @A2Ram14(0) : A2Block(15) = @A2Ram15(0)
+EndProcedure
+
+; The host address of byte `addr` of bank `bank` as RAM (for $D000-$FFFF: the language card's RAM,
+; bank 2 or 1 of $D000 as A2LcBank2 says). Not for $C000-$CFFF.
+Procedure.i A2RamHost(bank.i, addr.i)
+  If addr < $C000
+    ProcedureReturn A2Block(bank * 8 + (addr >> 13)) + (addr & $1FFF)
+  EndIf
+  If addr < $E000
+    ProcedureReturn A2Block(bank * 8 + 6) + (addr - $D000) + A2LcBank2 * $1000
+  EndIf
+  ProcedureReturn A2Block(bank * 8 + 7) + (addr - $E000)
+EndProcedure
+
+; The byte the video sees: bank 0 main, 1 auxiliary, $0000-$BFFF.
+Macro A2Peek(bank, addr)
+  PeekA(A2Block((bank) * 8 + ((addr) >> 13)) + ((addr) & $1FFF))
+EndMacro
+
+Macro A2SetRd(p, host)
+  CpuRdMap(p) = (host) - (p) * 256
+  CpuRdMap((p) + 256) = CpuRdMap(p) - 65536
+EndMacro
+Macro A2SetWr(p, host)
+  CpuWrMap(p) = (host) - (p) * 256
+  CpuWrMap((p) + 256) = CpuWrMap(p) - 65536
+EndMacro
+
+; Pages first..last of $0200-$BFFF, from RAMRD / RAMWRT / 80STORE / PAGE2 / HIRES.
+Global MapP.i, MapR.i, MapW.i
+Procedure A2MapMain(first.i, last.i)
+  For MapP = first To last
+    MapR = A2RamRd : MapW = A2RamWrt
+    If A2Store80
+      If MapP >= 4 And MapP <= 7
+        MapR = A2Page2 : MapW = A2Page2
+      ElseIf A2Hires And MapP >= $20 And MapP <= $3F
+        MapR = A2Page2 : MapW = A2Page2
+      EndIf
+    EndIf
+    A2SetRd(MapP, A2Block(MapR * 8 + (MapP >> 5)) + (MapP & 31) * 256)
+    A2SetWr(MapP, A2Block(MapW * 8 + (MapP >> 5)) + (MapP & 31) * 256)
+  Next
+EndProcedure
+
+; Zero page, the stack and the language card area: ALTZP picks the bank of all three.
+Procedure A2MapZpLc()
+  Protected p.i
+  CpuZp = A2Block(A2AltZp * 8)
+  A2SetRd(0, CpuZp) : A2SetWr(0, CpuZp)
+  A2SetRd(1, CpuZp + 256) : A2SetWr(1, CpuZp + 256)
+  For p = $D0 To $FF
+    If A2LcRead
+      A2SetRd(p, A2RamHost(A2AltZp, p * 256))
+    Else
+      A2SetRd(p, A2Rom + A2RomBank * $4000 + (p - $C0) * 256)
+    EndIf
+    If A2LcWrite
+      A2SetWr(p, A2RamHost(A2AltZp, p * 256))
+    Else
+      A2SetWr(p, @CpuSink(0))
+    EndIf
+  Next
+EndProcedure
+
+; $C100-$CFFF: the IIc's own firmware, always (the IIc has no slots).
+Procedure A2MapRomC()
+  Protected p.i
+  For p = $C1 To $CF
+    A2SetRd(p, A2Rom + A2RomBank * $4000 + (p - $C0) * 256)
+    A2SetWr(p, @CpuSink(0))
+  Next
+EndProcedure
+
+Procedure A2MapAll()
+  A2MapMain(2, $BF)
+  CpuRdMap($C0) = 0 : CpuRdMap($C0 + 256) = 0
+  CpuWrMap($C0) = 0 : CpuWrMap($C0 + 256) = 0
+  A2MapRomC()
+  A2MapZpLc()
+EndProcedure
+
+; ---------------------------------------------------------------- reset
+
+; Power on: RAM cleared, every switch as the IIc's reset leaves it, the ROM's first bank.
+Procedure A2PowerOn()
+  Protected b.i, i.i
+  For b = 0 To 15
+    For i = 0 To 8191 : PokeA(A2Block(b) + i, 0) : Next
+  Next
+  A2RomBank = 0
+EndProcedure
+
+; The RESET line (Ctrl+Reset, and power on): the IOU and MMU switches go to their reset state.
+Procedure A2Reset()
+  A2Store80 = 0 : A2RamRd = 0 : A2RamWrt = 0 : A2AltZp = 0 : A2Col80 = 0 : A2AltChar = 0
+  A2Text = 1 : A2Mixed = 0 : A2Page2 = 0 : A2Hires = 0 : A2DHires = 0 : A2IouDis = 1
+  A2LcRead = 0 : A2LcWrite = 0 : A2LcBank2 = 1 : A2LcPrewrite = 0
+  A2VblEnable = 0 : A2VblFlag = 0
+  A2MapAll()
+EndProcedure
+
+; ---------------------------------------------------------------- the keyboard
+; Keys typed on the host wait in a queue; the next one goes into the latch when the program has taken
+; the last (the strobe is clear) and a frame has passed, so pasted text arrives at a pace a program
+; reading the keyboard keeps up with. The any-key-down flag stays on for two frames after a key.
+
+#A2_KEYQ = 256
+Global Dim A2KeyQ.a(#A2_KEYQ)
+Global A2KeyHead.i, A2KeyTail.i, A2KeyHeld.i, A2KeyTyped.i, A2KeyDropped.i
+
+Procedure A2KeyPress(code.i)
+  A2Key = (code & $7F) | $80
+  A2KeyDown = 1 : A2KeyHeld = 2
+  A2KeyTyped = A2KeyTyped + 1
+EndProcedure
+
+Procedure A2KeyPut(code.i)
+  If ((A2KeyHead + 1) & (#A2_KEYQ - 1)) = A2KeyTail
+    A2KeyDropped = A2KeyDropped + 1
+    ProcedureReturn
+  EndIf
+  A2KeyQ(A2KeyHead) = code & $7F
+  A2KeyHead = (A2KeyHead + 1) & (#A2_KEYQ - 1)
+EndProcedure
+
+Procedure.i A2KeyPending()
+  ProcedureReturn (A2KeyHead - A2KeyTail) & (#A2_KEYQ - 1)
+EndProcedure
+
+Procedure A2KeyFrame()
+  If A2KeyHeld > 0
+    A2KeyHeld = A2KeyHeld - 1
+    If A2KeyHeld = 0 : A2KeyDown = 0 : EndIf
+  EndIf
+  If (A2Key & $80) = 0 And A2KeyHead <> A2KeyTail
+    A2KeyPress(A2KeyQ(A2KeyTail))
+    A2KeyTail = (A2KeyTail + 1) & (#A2_KEYQ - 1)
+  EndIf
+EndProcedure
+
+; ---------------------------------------------------------------- the I/O page
+
+; The low seven bits of a switch read: the keyboard latch, as the IIc's bus leaves them.
+Macro A2Flag(on)
+  ((A2Key & $7F) | ((on) << 7))
+EndMacro
+
+Procedure A2LanguageCard(addr.i, isWrite.i)
+  A2LcBank2 = Bool((addr & 8) = 0)
+  A2LcRead = Bool((addr & 3) = 0 Or (addr & 3) = 3)
+  If addr & 1
+    If isWrite = 0
+      If A2LcPrewrite : A2LcWrite = 1 : EndIf
+      A2LcPrewrite = 1
+    Else
+      A2LcPrewrite = 0
+    EndIf
+  Else
+    A2LcWrite = 0 : A2LcPrewrite = 0
+  EndIf
+  A2MapZpLc()
+EndProcedure
+
+; $C050-$C05F, the video switches and (IOUDIS off) the mouse's interrupt controls; any access.
+Procedure A2VideoSwitch(addr.i)
+  Select addr & 15
+    Case 0 : A2Text = 0
+    Case 1 : A2Text = 1
+    Case 2 : A2Mixed = 0
+    Case 3 : A2Mixed = 1
+    Case 4
+      A2Page2 = 0
+      If A2Store80 : A2MapMain(4, 7) : A2MapMain($20, $3F) : EndIf
+    Case 5
+      A2Page2 = 1
+      If A2Store80 : A2MapMain(4, 7) : A2MapMain($20, $3F) : EndIf
+    Case 6
+      A2Hires = 0
+      If A2Store80 : A2MapMain($20, $3F) : EndIf
+    Case 7
+      A2Hires = 1
+      If A2Store80 : A2MapMain($20, $3F) : EndIf
+    Case $A : A2VblEnable = 0 : CpuIrqLine = 0
+    Case $B : A2VblEnable = 1
+    Case $E
+      If A2IouDis : A2DHires = 1 : EndIf
+    Case $F
+      If A2IouDis : A2DHires = 0 : EndIf
+  EndSelect
+EndProcedure
+
+Global A2IoValue.i
+Procedure.i CpuBusRead(addr.i)
+  A2IoValue = A2Key & $7F
+  Select (addr >> 4) & 15
+    Case 0
+      A2IoValue = A2Key
+    Case 1
+      Select addr & 15
+        Case 0
+          A2IoValue = (A2Key & $7F) | (A2KeyDown << 7)
+          A2Key = A2Key & $7F
+        Case 1 : A2IoValue = A2Flag(A2LcBank2)
+        Case 2 : A2IoValue = A2Flag(A2LcRead)
+        Case 3 : A2IoValue = A2Flag(A2RamRd)
+        Case 4 : A2IoValue = A2Flag(A2RamWrt)
+        Case 6 : A2IoValue = A2Flag(A2AltZp)
+        Case 8 : A2IoValue = A2Flag(A2Store80)
+        Case 9 : A2IoValue = A2Flag(Bool(A2FrameCycle + CpuElapsed() < #A2_VBL_CYCLE))
+        Case $A : A2IoValue = A2Flag(A2Text)
+        Case $B : A2IoValue = A2Flag(A2Mixed)
+        Case $C : A2IoValue = A2Flag(A2Page2)
+        Case $D : A2IoValue = A2Flag(A2Hires)
+        Case $E : A2IoValue = A2Flag(A2AltChar)
+        Case $F : A2IoValue = A2Flag(A2Col80)
+      EndSelect
+    Case 2
+      If (addr & 15) = 8 And A2RomBytes > 16384
+        A2RomBank = A2RomBank ! 1
+        A2MapRomC() : A2MapZpLc()
+      EndIf
+    Case 3
+      A2SpeakerClick()
+    Case 5
+      A2VideoSwitch(addr)
+    Case 6
+      Select addr & 15
+        Case 1 : A2IoValue = A2OpenApple << 7
+        Case 2 : A2IoValue = A2SolidApple << 7
+        Case 3 : A2IoValue = $80     ; the mouse button, up
+        Default : A2IoValue = 0      ; the 80/40 switch and the paddle timers
+      EndSelect
+    Case 7
+      Select addr & 15
+        Case 0 : A2VblFlag = 0 : CpuIrqLine = 0   ; PTRIG also clears the VBL interrupt
+        Case $E : A2IoValue = A2Flag(A2IouDis)
+        Case $F : A2IoValue = A2Flag(A2DHires)
+      EndSelect
+    Case 8
+      A2LanguageCard(addr, 0)
+    Case 9
+      ; the two serial ports' 6551s: status says the transmitter is empty, nothing received
+      If (addr & 15) = 9 : A2IoValue = $10 : Else : A2IoValue = 0 : EndIf
+    Case $A
+      If (addr & 15) = 9 : A2IoValue = $10 : Else : A2IoValue = 0 : EndIf
+    Case $E
+      A2IoValue = DiskIo(addr, 0, 0)
+  EndSelect
+  ProcedureReturn A2IoValue
+EndProcedure
+
+Procedure CpuBusWrite(addr.i, value.i)
+  Select (addr >> 4) & 15
+    Case 0
+      Select addr & 15
+        Case 0 : A2Store80 = 0 : A2MapMain(4, 7) : A2MapMain($20, $3F)
+        Case 1 : A2Store80 = 1 : A2MapMain(4, 7) : A2MapMain($20, $3F)
+        Case 2 : A2RamRd = 0 : A2MapMain(2, $BF)
+        Case 3 : A2RamRd = 1 : A2MapMain(2, $BF)
+        Case 4 : A2RamWrt = 0 : A2MapMain(2, $BF)
+        Case 5 : A2RamWrt = 1 : A2MapMain(2, $BF)
+        Case 8 : A2AltZp = 0 : A2MapZpLc()
+        Case 9 : A2AltZp = 1 : A2MapZpLc()
+        Case $C : A2Col80 = 0
+        Case $D : A2Col80 = 1
+        Case $E : A2AltChar = 0
+        Case $F : A2AltChar = 1
+      EndSelect
+    Case 1
+      If (addr & 15) = 0 : A2Key = A2Key & $7F : EndIf
+    Case 2
+      If (addr & 15) = 8 And A2RomBytes > 16384
+        A2RomBank = A2RomBank ! 1
+        A2MapRomC() : A2MapZpLc()
+      EndIf
+    Case 3
+      A2SpeakerClick()
+    Case 5
+      A2VideoSwitch(addr)
+    Case 7
+      Select addr & 15
+        Case 0 : A2VblFlag = 0 : CpuIrqLine = 0
+        Case $E : A2IouDis = 1
+        Case $F : A2IouDis = 0
+      EndSelect
+    Case 8
+      A2LanguageCard(addr, 1)
+    Case $E
+      DiskIo(addr, value, 1)
+  EndSelect
+EndProcedure
+
+; ---------------------------------------------------------------- time
+
+; Cycles since power on, now (inside an I/O access: to the instruction making it).
+Procedure.i A2Now()
+  ProcedureReturn CpuCycles + CpuElapsed()
+EndProcedure
+
+; The video's vertical blank begins: the VBL flag, and its interrupt when enabled.
+Procedure A2VblStart()
+  A2VblFlag = 1
+  CpuIrqLine = A2VblEnable
+EndProcedure
+
+Declare SoundCatchUp(now.i)
+
+; One frame of the machine: 17030 cycles in windows of up to 16 lines, a window ending where the
+; vertical blank starts; interrupts are taken between windows. THE PATH DOWN TO CpuRun keeps no locals
+; (on the Pico the core holds CpuX and CpuFZ in r4 and r5 for the whole program, PM1126): globals only.
+Global A2RunNeed.i, A2RunUsed.i, A2VblDone.i, A2Stopped.i
+Procedure A2RunFrame()
+  A2VblDone = 0
+  While A2FrameCycle < #A2_FRAME_CYCLES
+    A2RunNeed = 16 * #A2_LINE_CYCLES
+    If A2VblDone = 0 And A2FrameCycle < #A2_VBL_CYCLE And A2FrameCycle + A2RunNeed > #A2_VBL_CYCLE
+      A2RunNeed = #A2_VBL_CYCLE - A2FrameCycle
+    EndIf
+    If A2FrameCycle + A2RunNeed > #A2_FRAME_CYCLES : A2RunNeed = #A2_FRAME_CYCLES - A2FrameCycle : EndIf
+    A2RunUsed = CpuInterrupts()
+    A2RunUsed = A2RunUsed + CpuRun(A2RunNeed)
+    A2FrameCycle = A2FrameCycle + A2RunUsed
+    If A2VblDone = 0 And A2FrameCycle >= #A2_VBL_CYCLE
+      A2VblStart() : A2VblDone = 1
+    EndIf
+  Wend
+  A2FrameCycle = A2FrameCycle - #A2_FRAME_CYCLES
+  A2Frames = A2Frames + 1
+  VFlash = (A2Frames >> 4) & 1
+  A2KeyFrame()
+  SoundCatchUp(CpuCycles)
+EndProcedure
+
+; Power on, or the cold start Ctrl+Open-Apple+Reset makes: everything cleared, the ROM's reset.
+Procedure A2ColdStart()
+  A2PowerOn()
+  A2Reset()
+  CpuSetStatus($24) : CpuA = 0 : CpuX = 0 : CpuY = 0 : CpuS = $FF
+  CpuReset()
+EndProcedure
+
+; Ctrl+Reset: the RESET line. RAM keeps its contents; the ROM decides warm or cold from it.
+Procedure A2WarmReset()
+  A2Reset()
+  CpuReset()
+EndProcedure
+
+; ---------------------------------------------------------------- the text on the screen
+
+; Character code on the screen -> ASCII for a dump: inverse and flashing letters read as letters,
+; MouseText (alternate set $40-$5F) as '#'.
+Procedure.i A2ScreenAscii(code.i)
+  Protected c.i
+  c = code & $7F
+  If code < $80
+    If A2AltChar And code >= $40 And code < $60 : ProcedureReturn 35 : EndIf
+    If code < $40 Or A2AltChar = 0 : c = code & $3F : EndIf
+  EndIf
+  If c < $20 : c = c + $40 : EndIf
+  ProcedureReturn c
+EndProcedure
+
+; Text row 0-23's address in page 1 ($400) or page 2 ($800).
+Procedure.i A2TextRowAddr(row.i, page2.i)
+  ProcedureReturn $400 + page2 * $400 + (row & 7) * $80 + (row >> 3) * $28
+EndProcedure

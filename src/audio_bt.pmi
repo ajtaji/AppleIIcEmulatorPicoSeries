@@ -1,0 +1,60 @@
+; Apple IIc sound to a Bluetooth speaker through PureMetal's Shared/Bluetooth/bt_audio.pmi (A2DP + SBC),
+; as the NES and CoCo 3 emulators of this family do it: core 0 connects (A2AudioBegin, before the
+; machine starts), core 1 keeps the radio and the encoder going between the lines it draws
+; (A2AudioPoll), and the library reads sound.pmi's 48 kHz ring directly (BtAudioSource).
+;
+; The speaker's address is never in this repository: a private wrapper (private/, ignored by git) calls
+; A2AudioPeer(?Address) with its 6 bytes in HCI order (least significant first). The link key is read,
+; never written, from the NES's record ("BTK1" in the last flash sector) so the speaker does not pair again.
+
+Global Dim A2BtPeer.a(6)
+Global A2BtPeerSet.i, A2AudioLive.i, A2AudioRc.i, A2AudioLast.i, A2AudioGap.i = 700
+
+Procedure A2AudioPeer(src.i)
+  Protected i.i
+  For i = 0 To 5 : A2BtPeer(i) = PeekA(src + 5 - i) : Next
+  BtAudioStereo(1)
+  A2BtPeerSet = 1
+EndProcedure
+
+Procedure A2AudioBegin(keyRecord.i)
+  A2AudioLive = 0
+  If A2BtPeerSet = 0
+    Say("Sound: no speaker set (the public firmware is silent; a private wrapper names the speaker)") : Eol()
+    ProcedureReturn
+  EndIf
+  If keyRecord
+    If PeekA(keyRecord) = 66 And PeekA(keyRecord + 1) = 84 And PeekA(keyRecord + 2) = 75 And PeekA(keyRecord + 3) = 49
+      BtAudioSetKey(keyRecord + 4)
+    EndIf
+  EndIf
+  Say("Sound: connecting to the Bluetooth speaker") : Eol()
+  A2AudioRc = BtAudioBegin(@A2BtPeer(0))
+  If A2AudioRc <> 0
+    Say("Sound: Bluetooth error ") : Num(A2AudioRc) : Say(" (HCI status ") : Num(BtAudioStatus())
+    Say("): the speaker is off, out of range or paired elsewhere; the IIc runs without sound") : Eol()
+    ProcedureReturn
+  EndIf
+  BtAudioSource(@SoundRing(0), #SOUND_RING, @SoundSamples)
+  BtAudioLead(30000)                     ; 30 ms behind the machine, inside the 85 ms ring
+  BtAudioPumps(0)                        ; from here core 1 drives the radio
+  A2AudioLive = 1
+  SoundOn = 1
+  Say("Sound: playing") : Eol()
+EndProcedure
+
+; From core 1, often: every 0.15 ms while a frame is part-way encoded, else every 0.7 ms.
+Procedure A2AudioPoll()
+  Protected now.i
+  If A2AudioLive = 0 : ProcedureReturn : EndIf
+  now = Micros()
+  If now - A2AudioLast < A2AudioGap : ProcedureReturn : EndIf
+  A2AudioLast = now
+  BtAudioPoll()
+  If BtAudioBusy() : A2AudioGap = 150 : Else : A2AudioGap = 700 : EndIf
+EndProcedure
+
+Procedure A2AudioReport()
+  Say(" bt_live=") : Num(BtAudioLive()) : Say(" bt_packets=") : Num(BtAudioPackets())
+  Say(" bt_underruns=") : Num(BtAudioUnderruns())
+EndProcedure

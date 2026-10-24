@@ -1,0 +1,297 @@
+; The IIc's 5.25" drives (1 = built in, 2 = external) behind the IWM at $C0E0-$C0EF, as the IIc's
+; firmware and DOS / ProDOS drive it: the IWM's Disk II-compatible mode. Chip- and host-independent.
+;
+; THE IMAGE comes from the host, a sector or a track at a time:
+;   DiskHostSector(drive, track, sector)    host address of a 256-byte sector (file order), 0 = none
+;   DiskHostTrack(drive, track)             host address of a 6656-byte raw track (.NIB / converted .WOZ)
+;   DiskHostWrite(drive, track, sector, src) keep a written 256-byte sector; 1 = kept
+;   DiskHostWriteTrack(drive, track, src)   keep a written raw track; 1 = kept
+; DiskKind(drive): 0 empty, 1 DOS order (.DSK / .DO), 2 ProDOS order (.PO), 3 raw tracks.
+;
+; THE TRACK. The head's track is held as 6656 nibbles (DiskNib): a sector image is "nibblized" into
+; the DOS 3.3 16-sector format when the head arrives (address field D5 AA 96, data field D5 AA AD,
+; 6-and-2 encoding, volume 254), and a track that was written is decoded back, sector by sector, when
+; the head leaves it or the motor stops. Each read of the data latch with the motor on gives the next
+; nibble (bit 7 set): software polls the latch, so this runs as fast as it is asked, not at 4 us a bit.
+;
+; Sources: Apple IIc Technical Reference Manual (the IWM's registers), "Beneath Apple DOS" (the track
+; format), CiderPress's Nibble.cpp (the 6-and-2 order; BSD; read, not copied).
+
+#DISK_TRACK_BYTES = 6656
+#DISK_TRACKS = 35
+
+Global Dim DiskKind.i(3)
+Global Dim DiskProtect.i(3)
+Global Dim DiskHalf.i(3)                 ; the head of each drive, in half tracks (0-68)
+Global Dim DiskNib.a(6720)
+Global Dim DiskSec.a(260)                ; one decoded sector
+Global Dim Disk62.a(64)                  ; 6-bit value -> disk byte
+Global Dim DiskUn62.a(256)               ; disk byte -> 6-bit value
+Global Dim DiskTwos.a(90)
+Global DiskNibDrive.i, DiskNibTrack.i = -1, DiskNibDirty.i
+Global DiskPos.i, DiskLatch.i, DiskMotor.i, DiskDrive.i = 1, DiskPhases.i, DiskQ6.i, DiskQ7.i, DiskMode.i
+Global DiskReads.i, DiskWrites.i, DiskWriteErrors.i, DiskSteps.i
+
+Declare.i DiskHostSector(drive.i, track.i, sector.i)
+Declare.i DiskHostTrack(drive.i, track.i)
+Declare.i DiskHostWrite(drive.i, track.i, sector.i, src.i)
+Declare.i DiskHostWriteTrack(drive.i, track.i, src.i)
+
+Procedure DiskInit()
+  Protected i.i, n.i, b.i, z.i
+  ; the 6-and-2 disk bytes from their rule (Beneath Apple DOS, ch. 3): the high bit set, two
+  ; neighbouring ones below it, at most one pair of neighbouring zeros, not the marks $AA and $D5
+  n = 0
+  For b = $80 To $FF
+    If b <> $AA And b <> $D5 And (b & (b >> 1) & $3F) <> 0
+      z = (~b) & ((~b) >> 1) & $3F
+      If (z & (z - 1)) = 0 : Disk62(n) = b : n = n + 1 : EndIf
+    EndIf
+  Next
+  For i = 0 To 255 : DiskUn62(i) = $FF : Next
+  For i = 0 To 63 : DiskUn62(Disk62(i)) = i : Next
+  DiskNibTrack = -1 : DiskNibDirty = 0
+  DiskHalf(1) = 0 : DiskHalf(2) = 0
+EndProcedure
+
+; The file's sector that physical sector `p` of a track holds.
+Procedure.i DiskLogical(drive.i, p.i)
+  If DiskKind(drive) = 2 : ProcedureReturn PeekA(?DiskProdosOrder + p) : EndIf
+  ProcedureReturn PeekA(?DiskDosOrder + p)
+EndProcedure
+
+; ---------------------------------------------------------------- nibblizing
+
+Global NzPos.i
+Macro DiskPut(v)
+  DiskNib(NzPos) = v
+  NzPos = NzPos + 1
+EndMacro
+Macro DiskPut44(v)
+  DiskPut(((v) >> 1) | $AA)
+  DiskPut((v) | $AA)
+EndMacro
+
+; 6-and-2: 256 bytes -> 342 six-bit values plus a checksum, as DOS 3.3 writes them.
+Procedure DiskEncode62(src.i)
+  Protected i.i, v.i, two.i, shift.i, sum.i
+  For i = 0 To 85 : DiskTwos(i) = 0 : Next
+  two = 85 : shift = 0
+  For i = 0 To 255
+    v = PeekA(src + i)
+    DiskTwos(two) = DiskTwos(two) | ((((v & 1) << 1) | ((v & 2) >> 1)) << shift)
+    If two = 0 : two = 86 : shift = shift + 2 : EndIf
+    two = two - 1
+  Next
+  sum = 0
+  For i = 85 To 0 Step -1
+    DiskPut(Disk62(DiskTwos(i) ! sum))
+    sum = DiskTwos(i)
+  Next
+  For i = 0 To 255
+    v = PeekA(src + i) >> 2
+    DiskPut(Disk62(v ! sum))
+    sum = v
+  Next
+  DiskPut(Disk62(sum))
+EndProcedure
+
+Procedure DiskNibblize(drive.i, track.i)
+  Protected p.i, i.i, src.i
+  NzPos = 0
+  If DiskKind(drive) = 3
+    src = DiskHostTrack(drive, track)
+    If src
+      For i = 0 To #DISK_TRACK_BYTES - 1 : DiskNib(i) = PeekA(src + i) : Next
+    Else
+      For i = 0 To #DISK_TRACK_BYTES - 1 : DiskNib(i) = 0 : Next
+    EndIf
+    ProcedureReturn
+  EndIf
+  For p = 0 To 15
+    For i = 1 To 20 : DiskPut($FF) : Next
+    If p = 0
+      For i = 1 To 28 : DiskPut($FF) : Next
+    EndIf
+    DiskPut($D5) : DiskPut($AA) : DiskPut($96)
+    DiskPut44(254) : DiskPut44(track) : DiskPut44(p) : DiskPut44(254 ! track ! p)
+    DiskPut($DE) : DiskPut($AA) : DiskPut($EB)
+    For i = 1 To 6 : DiskPut($FF) : Next
+    DiskPut($D5) : DiskPut($AA) : DiskPut($AD)
+    src = DiskHostSector(drive, track, DiskLogical(drive, p))
+    If src
+      DiskEncode62(src)
+    Else
+      For i = 0 To 255 : DiskSec(i) = 0 : Next
+      DiskEncode62(@DiskSec(0))
+    EndIf
+    DiskPut($DE) : DiskPut($AA) : DiskPut($EB)
+  Next
+  While NzPos < #DISK_TRACK_BYTES : DiskPut($FF) : Wend
+EndProcedure
+
+; ---------------------------------------------------------------- decoding a written track
+
+Procedure.i DiskNibAt(i.i)
+  ProcedureReturn DiskNib(i % #DISK_TRACK_BYTES)
+EndProcedure
+
+; Decode the data field whose first 6-and-2 value is at `at` into DiskSec; 1 = checksum good.
+Procedure.i DiskDecode62(at.i)
+  Protected i.i, v.i, sum.i, two.i, shift.i, b.i
+  sum = 0
+  For i = 85 To 0 Step -1
+    v = DiskUn62(DiskNibAt(at))
+    If v = $FF : ProcedureReturn 0 : EndIf
+    sum = sum ! v : DiskTwos(i) = sum
+    at = at + 1
+  Next
+  For i = 0 To 255
+    v = DiskUn62(DiskNibAt(at))
+    If v = $FF : ProcedureReturn 0 : EndIf
+    sum = sum ! v : DiskSec(i) = sum << 2
+    at = at + 1
+  Next
+  v = DiskUn62(DiskNibAt(at))
+  If v <> sum : ProcedureReturn 0 : EndIf
+  two = 85 : shift = 0
+  For i = 0 To 255
+    b = (DiskTwos(two) >> shift) & 3
+    DiskSec(i) = DiskSec(i) | ((b & 1) << 1) | ((b & 2) >> 1)
+    If two = 0 : two = 86 : shift = shift + 2 : EndIf
+    two = two - 1
+  Next
+  ProcedureReturn 1
+EndProcedure
+
+Procedure DiskFlushTrack()
+  Protected i.i, k.i, sector.i, found.i
+  If DiskNibDirty = 0 Or DiskNibTrack < 0 : ProcedureReturn : EndIf
+  DiskNibDirty = 0
+  If DiskKind(DiskNibDrive) = 3
+    If DiskHostWriteTrack(DiskNibDrive, DiskNibTrack, @DiskNib(0)) = 0 : DiskWriteErrors = DiskWriteErrors + 1 : EndIf
+    ProcedureReturn
+  EndIf
+  ; every address field on the track, then the data field that follows it
+  For i = 0 To #DISK_TRACK_BYTES - 1
+    If DiskNib(i) = $D5 And DiskNibAt(i + 1) = $AA And DiskNibAt(i + 2) = $96
+      sector = ((DiskNibAt(i + 7) << 1) | 1) & DiskNibAt(i + 8)
+      found = 0
+      For k = i + 14 To i + 60
+        If DiskNibAt(k) = $D5 And DiskNibAt(k + 1) = $AA And DiskNibAt(k + 2) = $AD
+          found = k + 3 : Break
+        EndIf
+      Next
+      If found And sector < 16
+        If DiskDecode62(found)
+          If DiskHostWrite(DiskNibDrive, DiskNibTrack, DiskLogical(DiskNibDrive, sector), @DiskSec(0)) = 0
+            DiskWriteErrors = DiskWriteErrors + 1
+          EndIf
+        Else
+          DiskWriteErrors = DiskWriteErrors + 1
+        EndIf
+      EndIf
+    EndIf
+  Next
+EndProcedure
+
+; Make DiskNib the track under the selected drive's head.
+Procedure DiskSeekBuffer()
+  Protected track.i
+  track = DiskHalf(DiskDrive) >> 1
+  If track = DiskNibTrack And DiskDrive = DiskNibDrive : ProcedureReturn : EndIf
+  DiskFlushTrack()
+  DiskNibDrive = DiskDrive : DiskNibTrack = track
+  If DiskKind(DiskDrive) = 0
+    For DiskPos = 0 To #DISK_TRACK_BYTES - 1 : DiskNib(DiskPos) = 0 : Next
+  Else
+    DiskNibblize(DiskDrive, track)
+  EndIf
+  DiskPos = DiskPos % #DISK_TRACK_BYTES
+EndProcedure
+
+; ---------------------------------------------------------------- the IWM's registers
+
+Procedure DiskPhase(phase.i, on.i)
+  Protected h.i
+  If on
+    DiskPhases = DiskPhases | (1 << phase)
+    h = DiskHalf(DiskDrive)
+    If phase = ((h + 1) & 3)
+      h = h + 1
+    ElseIf phase = ((h + 3) & 3)
+      h = h - 1
+    EndIf
+    If h < 0 : h = 0 : EndIf
+    If h > #DISK_TRACKS * 2 - 2 : h = #DISK_TRACKS * 2 - 2 : EndIf
+    If h <> DiskHalf(DiskDrive) : DiskSteps = DiskSteps + 1 : EndIf
+    DiskHalf(DiskDrive) = h
+  Else
+    DiskPhases = DiskPhases & (15 ! (1 << phase))
+  EndIf
+EndProcedure
+
+; Any access to $C0E0-$C0EF. Returns what a read sees.
+Procedure.i DiskIo(addr.i, value.i, isWrite.i)
+  Protected r.i
+  r = addr & 15
+  If r < 8
+    DiskPhase(r >> 1, r & 1)
+  ElseIf r = 8
+    If DiskMotor : DiskFlushTrack() : EndIf
+    DiskMotor = 0
+  ElseIf r = 9
+    DiskMotor = 1
+  ElseIf r = $A
+    DiskDrive = 1
+  ElseIf r = $B
+    DiskDrive = 2
+  ElseIf r = $C
+    DiskQ6 = 0
+  ElseIf r = $D
+    DiskQ6 = 1
+  ElseIf r = $E
+    DiskQ7 = 0
+  Else
+    DiskQ7 = 1
+  EndIf
+  If isWrite
+    ; a write with Q6 and Q7 high: with the motor on it is data to the disk, with it off the mode register
+    If (r & 1) And DiskQ6 And DiskQ7
+      If DiskMotor : DiskLatch = value : Else : DiskMode = value & $1F : EndIf
+    EndIf
+  EndIf
+  If r = $C And DiskMotor And DiskKind(DiskDrive)
+    DiskSeekBuffer()
+    If DiskQ7
+      If DiskProtect(DiskDrive) = 0
+        DiskNib(DiskPos) = DiskLatch
+        DiskNibDirty = 1
+        DiskWrites = DiskWrites + 1
+      EndIf
+    Else
+      DiskLatch = DiskNib(DiskPos)
+      DiskReads = DiskReads + 1
+    EndIf
+    DiskPos = DiskPos + 1
+    If DiskPos >= #DISK_TRACK_BYTES : DiskPos = 0 : EndIf
+  EndIf
+  If isWrite Or (r & 1) : ProcedureReturn 0 : EndIf
+  If DiskQ6 = 0 And DiskQ7 = 0
+    If DiskMotor = 0 Or DiskKind(DiskDrive) = 0 : ProcedureReturn DiskLatch & $7F : EndIf
+    ProcedureReturn DiskLatch
+  EndIf
+  If DiskQ6 And DiskQ7 = 0
+    ; the status register: write protect, the motor, the mode
+    ProcedureReturn (DiskProtect(DiskDrive) << 7) | (DiskMotor << 5) | DiskMode
+  EndIf
+  ; the write handshake register: ready for data, no underrun
+  ProcedureReturn $C0
+EndProcedure
+
+DataSection
+  DiskDosOrder:                          ; physical sector -> sector of a DOS-order image
+  Data.a 0, 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8, 15
+  DiskProdosOrder:                       ; physical sector -> sector of a ProDOS-order image
+  Data.a 0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15
+EndDataSection

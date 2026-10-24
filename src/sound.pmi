@@ -1,0 +1,48 @@
+; The Apple IIc speaker: every access to $C030 flips the cone. The level is sampled at 48 kHz against
+; machine time into a ring the host plays (the Bluetooth speaker on a Pico, the PC's audio on the
+; desktop). Each click first fills the ring up to the moment of the click with the old level, so the
+; pitch of a timing-loop tone is exact.
+;
+; A sample is due every 1020484 / 48000 = 21.26 cycles (the IIc's average clock, 14.31818 MHz x 65 /
+; 912): 21, plus one when the remainder (12484 per sample, out of 48000) carries.
+;
+; The real cone does not hold a level for ever: after 1024 samples (21 ms) without a click the level
+; returns to 0, so a speaker left on one side is silence, not a constant offset.
+
+#SOUND_RING = 4096                       ; samples, a power of two (85 ms)
+#SOUND_AMPLITUDE = 6000
+
+Global Dim SoundRing.w(#SOUND_RING)
+Global SoundSamples.i                    ; samples ever written (the player follows this)
+Global SoundNext.i, SoundFrac.i, SoundLevel.i, SoundQuiet.i, SoundOn.i
+
+Procedure SoundStart(now.i)
+  SoundNext = now : SoundFrac = 0 : SoundLevel = #SOUND_AMPLITUDE : SoundQuiet = 1024
+EndProcedure
+
+; Fill the ring up to cycle `now`.
+Procedure SoundCatchUp(now.i)
+  Protected v.i
+  If SoundOn = 0 : ProcedureReturn : EndIf
+  While now - SoundNext >= 0
+    If SoundQuiet < 1024
+      v = SoundLevel
+      SoundQuiet = SoundQuiet + 1
+    Else
+      v = 0
+    EndIf
+    SoundRing(SoundSamples & (#SOUND_RING - 1)) = v
+    SoundSamples = SoundSamples + 1
+    SoundNext = SoundNext + 21
+    SoundFrac = SoundFrac + 12484
+    If SoundFrac >= 48000 : SoundFrac = SoundFrac - 48000 : SoundNext = SoundNext + 1 : EndIf
+  Wend
+EndProcedure
+
+Procedure A2SpeakerClick()
+  A2SpeakerClicks = A2SpeakerClicks + 1
+  If SoundOn = 0 : ProcedureReturn : EndIf
+  SoundCatchUp(A2Now())
+  SoundLevel = 0 - SoundLevel
+  SoundQuiet = 0
+EndProcedure

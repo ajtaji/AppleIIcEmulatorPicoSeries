@@ -1,0 +1,22 @@
+; Pico 2 W (RP2350, Arm): the same LAFVIN ST7796 wiring as the Pico W (SPI0 GP2/GP3, CS GP5, DC GP6,
+; RST GP7), landscape 480 x 320; 150 MHz, the SPI from clk_sys. Core 1 is the second M33
+; (multicore_smp.pico2). The rest is src/board_common.pmi.
+
+#A2_CLOCK_KHZ = 150000
+#A2_BOARD_NAME$ = "Pico 2 W"
+; The speaker link key the NES firmware keeps ("BTK1", last sector of the 4 MB flash), read only.
+#A2_BTKEY_FLASH = $103FF000
+
+Procedure VideoBegin()
+  SpiPeriFromSys(ClockSysConfigKhz())
+  SpiBegin(0, 2, 3, -1, 100000)
+  Tft796Begin(0, 5, 6, 7) : Tft796Rotate(1) : Tft796Fill(0)
+EndProcedure
+
+Procedure.i A2LaunchCore1()
+  McCore1ReleaseHold()
+  If McLaunchCore1() = 6 : ProcedureReturn 1 : EndIf
+  ProcedureReturn 0
+EndProcedure
+
+XIncludeFile "../src/board_common.pmi"

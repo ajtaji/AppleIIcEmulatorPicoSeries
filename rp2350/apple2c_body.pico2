@@ -1,0 +1,35 @@
+; Everything an Apple IIc build for the Pico 2 W includes. The wrapper sets #CPU_ASM_TAIL, #A2_ROM,
+; #A2_DISK and #A2_AUDIO (1: the Bluetooth speaker libraries; a private wrapper then names the speaker
+; and supplies A2RomData / A2DiskData), then includes this file and calls Main().
+EnableExplicit
+XIncludeFile "RP2350/Lib/multicore_smp.pico2"
+XIncludeFile "RP2350/Lib/clocks.pico2"
+XIncludeFile "RP2350/Lib/timer.pico2"
+XIncludeFile "RP2350/Lib/uart.pico2"
+XIncludeFile "RP2350/Lib/usb_serial.pico2"
+XIncludeFile "RP2350/Lib/safety.pico2"
+XIncludeFile "RP2350/Lib/spi.pico2"
+XIncludeFile "RP2350/Lib/st7796.pico2"
+XIncludeFile "../src/cpu65c02.pmi"
+XIncludeFile "../src/machine.pmi"
+XIncludeFile "../src/sound.pmi"
+XIncludeFile "../src/disk.pmi"
+XIncludeFile "../src/video.pmi"
+XIncludeFile "../src/font.pmi"
+XIncludeFile "../src/testrom.pmi"
+XIncludeFile "../src/video_panel.pmi"
+CompilerIf #A2_AUDIO = 1
+  XIncludeFile "RP2350/Lib/bits.pico2"
+  XIncludeFile "RP2350/Lib/wiring.pico2"
+  XIncludeFile "RP2350/Lib/string_out.pico2"
+  XIncludeFile "RP2350/Lib/cyw43_nvram.pico2"
+  XIncludeFile "RP2350/Lib/cyw43.pico2"
+  XIncludeFile "RP2350/Lib/cyw43_btfw.pico2"
+  XIncludeFile "RP2350/Lib/bluetooth.pico2"
+  XIncludeFile "Shared/Bluetooth/sbc.pmi"
+  XIncludeFile "Shared/Bluetooth/bt_audio.pmi"
+  XIncludeFile "../src/audio_bt.pmi"
+CompilerElse
+  XIncludeFile "../src/audio_none.pmi"
+CompilerEndIf
+XIncludeFile "board.pico2"

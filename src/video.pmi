@@ -1,0 +1,261 @@
+; Apple IIc video, one line at a time from guest RAM, into 560 "dots" of colour 0-15 (VDots). Chip- and
+; host-independent: the Pico's panel output (video_panel.pmi) and the desktop window both take VDots.
+;
+; THE DOTS. A line of the Apple's picture is 560 dots of the 14.318 MHz clock: a 40-column character or
+; a hi-res byte is 14, an 80-column character or a double hi-res byte 7.
+;
+; COLOUR is the NTSC artifact colour the composite output makes, computed from the dot stream: the
+; colour at dot x is the 4-bit value of the dots x-1 .. x+2, each at the bit of its position in the
+; 4-dot colour cycle (bit = position & 3), and that value is a lo-res colour number. A run of dots is
+; white, a lone pixel takes its column's colour: hi-res violet / green on even / odd columns, blue /
+; orange with the palette bit, double hi-res the 16 colours, all from one rule. Text is not coloured
+; (the colour killer is on in text). Lo-res blocks are drawn solid in their colour. VMono = 1 draws
+; every mode in white on black, as a monochrome monitor shows it.
+;
+; THE FONT is this project's own (src/font.pmi), not Apple's character ROM.
+
+#VIDEO_DOTS = 560
+
+Global Dim VBits.a(576)                  ; the line as dots, 0/1, before colouring (+ slack)
+Global Dim VDots.a(576)                  ; the line as colours 0-15
+Global VMode.i                           ; the last line's mode (#VM_...)
+
+#VM_TEXT40 = 0
+#VM_TEXT80 = 1
+#VM_LORES = 2
+#VM_DLORES = 3
+#VM_HIRES = 4
+#VM_DHIRES = 5
+
+; The mode line `line` (0-191) shows now.
+Procedure.i VideoLineMode(line.i)
+  If A2Text Or (A2Mixed And line >= 160)
+    If A2Col80 : ProcedureReturn #VM_TEXT80 : EndIf
+    ProcedureReturn #VM_TEXT40
+  EndIf
+  If A2Hires
+    If A2DHires And A2Col80 : ProcedureReturn #VM_DHIRES : EndIf
+    ProcedureReturn #VM_HIRES
+  EndIf
+  If A2DHires And A2Col80 : ProcedureReturn #VM_DLORES : EndIf
+  ProcedureReturn #VM_LORES
+EndProcedure
+
+; The page shown: 80STORE makes PAGE2 pick the bank instead, and page 1 is shown.
+Procedure.i VideoPage2()
+  If A2Store80 : ProcedureReturn 0 : EndIf
+  ProcedureReturn A2Page2
+EndProcedure
+
+Procedure.i VideoHiresAddr(line.i)
+  ProcedureReturn $2000 + VideoPage2() * $2000 + (line & 7) * $400 + ((line >> 3) & 7) * $80 + (line >> 6) * $28
+EndProcedure
+
+; ---------------------------------------------------------------- a summary of what a line shows
+
+; A hash of everything that decides the line's picture: the mode, the switches it depends on and
+; the bytes it reads. A line whose hash has not changed need not be drawn again.
+Global VhAddr.i, VhI.i, VhH.i
+Procedure.l VideoLineHash(line.i)
+  VMode = VideoLineMode(line)
+  VhH = VMode * 7919 + VMono * 31 + A2AltChar * 131
+  If VMode <= #VM_DLORES
+    VhAddr = A2TextRowAddr(line >> 3, VideoPage2())
+    If VMode <= #VM_TEXT80 : VhH = VhH + VFlash * 977 + (line & 7) : Else : VhH = VhH + (line & 4) : EndIf
+  Else
+    VhAddr = VideoHiresAddr(line)
+  EndIf
+  For VhI = 0 To 39
+    VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! A2Peek(0, VhAddr + VhI)
+  Next
+  If VMode = #VM_TEXT80 Or VMode = #VM_DLORES Or VMode = #VM_DHIRES
+    For VhI = 0 To 39
+      VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! A2Peek(1, VhAddr + VhI)
+    Next
+  EndIf
+  ProcedureReturn VhH
+EndProcedure
+
+; ---------------------------------------------------------------- text
+
+; The 7-dot row `row` of character `code` as the screen shows it (inverse and flashing applied).
+Procedure.i VideoCharRow(code.i, row.i)
+  Protected glyph.i, bits.i, inv.i
+  inv = 0
+  If code >= $E0
+    glyph = 64 + (code & $1F)
+  ElseIf code >= $80
+    glyph = code & $3F
+  ElseIf A2AltChar
+    If code < $40
+      glyph = code & $3F : inv = 1
+    ElseIf code < $60
+      glyph = 96 + (code & $1F)
+    Else
+      glyph = 64 + (code & $1F) : inv = 1
+    EndIf
+  Else
+    glyph = code & $3F
+    If code < $40 : inv = 1 : Else : inv = VFlash : EndIf
+  EndIf
+  ; glyph indexes: 0-31 for codes $00-$1F are '@'-'_' (ASCII $40-$5F), 32-63 are ASCII $20-$3F
+  If glyph < 32
+    glyph = glyph + 32
+  ElseIf glyph < 64
+    glyph = glyph - 32
+  EndIf
+  bits = PeekA(?A2Font + glyph * 8 + row) & $7F
+  If inv : bits = bits ! $7F : EndIf
+  ProcedureReturn bits
+EndProcedure
+
+Global VtAddr.i, VtC.i, VtBits.i, VtK.i, VtX.i, VtCode.i
+Procedure VideoText40(line.i)
+  VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
+  VtX = 0
+  For VtC = 0 To 39
+    VtBits = VideoCharRow(A2Peek(0, VtAddr + VtC), line & 7)
+    For VtK = 0 To 6
+      If (VtBits >> VtK) & 1
+        VDots(VtX) = 15 : VDots(VtX + 1) = 15
+      Else
+        VDots(VtX) = 0 : VDots(VtX + 1) = 0
+      EndIf
+      VtX = VtX + 2
+    Next
+  Next
+EndProcedure
+
+Procedure VideoText80(line.i)
+  VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
+  VtX = 0
+  For VtC = 0 To 79
+    VtCode = A2Peek(1 - (VtC & 1), VtAddr + (VtC >> 1))
+    VtBits = VideoCharRow(VtCode, line & 7)
+    For VtK = 0 To 6
+      VDots(VtX) = ((VtBits >> VtK) & 1) * 15
+      VtX = VtX + 1
+    Next
+  Next
+EndProcedure
+
+; ---------------------------------------------------------------- lo-res
+
+Procedure VideoLores(line.i, double.i)
+  Protected c.i, n.i, k.i, x.i, byte.i, width.i, cells.i, bank.i
+  VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
+  If double : cells = 80 : width = 7 : Else : cells = 40 : width = 14 : EndIf
+  x = 0
+  For c = 0 To cells - 1
+    If double
+      bank = 1 - (c & 1)
+      byte = A2Peek(bank, VtAddr + (c >> 1))
+    Else
+      bank = 0
+      byte = A2Peek(0, VtAddr + c)
+    EndIf
+    If line & 4 : n = byte >> 4 : Else : n = byte & 15 : EndIf
+    ; the auxiliary bytes of double lo-res sit one quarter of the colour cycle earlier
+    If bank = 1 : n = ((n >> 1) | (n << 3)) & 15 : EndIf
+    If VMono
+      For k = 0 To width - 1
+        VDots(x + k) = Bool(((n >> ((x + k) & 3)) & 1) <> 0) * 15
+      Next
+    Else
+      For k = 0 To width - 1 : VDots(x + k) = n : Next
+    EndIf
+    x = x + width
+  Next
+EndProcedure
+
+; ---------------------------------------------------------------- hi-res and double hi-res
+
+Procedure VideoHires(line.i)
+  Protected c.i, k.i, p.i, byte.i, v.i
+  VtAddr = VideoHiresAddr(line)
+  For c = 0 To 39
+    byte = A2Peek(0, VtAddr + c)
+    p = c * 14
+    If byte & $80
+      ; the palette bit delays the byte by one dot; the dot it skips holds the one before
+      If c = 0 : VBits(0) = 0 : Else : VBits(p) = VBits(p - 1) : EndIf
+      p = p + 1
+    EndIf
+    For k = 0 To 6
+      v = (byte >> k) & 1
+      VBits(p) = v : VBits(p + 1) = v
+      p = p + 2
+    Next
+  Next
+  VBits(560) = 0
+EndProcedure
+
+Procedure VideoDHires(line.i)
+  Protected c.i, k.i, p.i, byte.i
+  VtAddr = VideoHiresAddr(line)
+  p = 0
+  For c = 0 To 79
+    byte = A2Peek(1 - (c & 1), VtAddr + (c >> 1))
+    For k = 0 To 6
+      VBits(p) = (byte >> k) & 1
+      p = p + 1
+    Next
+  Next
+EndProcedure
+
+; VBits -> VDots: the artifact colour of each dot (or white / black in monochrome).
+Procedure VideoColourBits()
+  Protected x.i, v.i, p.i
+  VBits(560) = 0 : VBits(561) = 0 : VBits(562) = 0
+  If VMono
+    For x = 0 To 559 : VDots(x) = VBits(x) * 15 : Next
+    ProcedureReturn
+  EndIf
+  ; v holds dots x-1 .. x+2, each at bit (position & 3)
+  v = VBits(0) | (VBits(1) << 1) | (VBits(2) << 2)
+  For x = 0 To 559
+    VDots(x) = v
+    p = (x + 3) & 3                      ; dot x-1 leaves, dot x+3 comes in, at the same bit
+    v = (v & (15 ! (1 << p))) | (VBits(x + 3) << p)
+  Next
+EndProcedure
+
+; ---------------------------------------------------------------- one line
+
+; Render line 0-191 into VDots; returns the mode (#VM_...).
+Procedure.i VideoRenderLine(line.i)
+  VMode = VideoLineMode(line)
+  Select VMode
+    Case #VM_TEXT40 : VideoText40(line)
+    Case #VM_TEXT80 : VideoText80(line)
+    Case #VM_LORES : VideoLores(line, 0)
+    Case #VM_DLORES : VideoLores(line, 1)
+    Case #VM_HIRES : VideoHires(line) : VideoColourBits()
+    Case #VM_DHIRES : VideoDHires(line) : VideoColourBits()
+  EndSelect
+  ProcedureReturn VMode
+EndProcedure
+
+; The 16 colours, 24-bit RGB (the usual NTSC Apple II values).
+DataSection
+  A2Palette:
+  Data.l $000000, $722640, $40337F, $E434FE, $0E5940, $808080, $1B9AFE, $BFB3FF
+  Data.l $404C00, $E46501, $808080, $F1A6BF, $1BCB01, $BFCC80, $8DD9BF, $FFFFFF
+EndDataSection
+
+; ---------------------------------------------------------------- the text screen as ASCII
+
+Procedure.i VideoTextCols()
+  If A2Col80 : ProcedureReturn 80 : EndIf
+  ProcedureReturn 40
+EndProcedure
+
+; Row 0-23, column 0-39 (0-79 in 80 columns) of the text page shown, as ASCII (A2ScreenAscii).
+Procedure.i VideoTextChar(row.i, col.i)
+  Protected addr.i
+  addr = A2TextRowAddr(row, VideoPage2())
+  If A2Col80
+    ProcedureReturn A2ScreenAscii(A2Peek(1 - (col & 1), addr + (col >> 1)))
+  EndIf
+  ProcedureReturn A2ScreenAscii(A2Peek(0, addr + col))
+EndProcedure
