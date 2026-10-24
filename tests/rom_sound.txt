@@ -1,7 +1,7 @@
 # Private build (Ron's IIc ROM 4, Tubers of Fate, the speaker): the IIc boots the disk, the game's title
 # comes up, and its sound goes to the Bluetooth speaker. Short: the speaker is shared.
 wait 1
-screen 40 Start anew or read
+screen 40 tart anew or read
 cmd s
 expect 5 bt_live=1
 type S
