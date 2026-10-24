@@ -26,7 +26,7 @@ around your own ROM file and disk image.
 | Video: 40/80-column text with inverse, flashing, lower case and MouseText; lo-res, double lo-res, hi-res, double hi-res, mixed; PAGE2 | Pico W (captured from the panel's renderer) and desktop: every mode drawn |
 | Colour: NTSC artifact colour from the dot stream (see below); a monochrome switch | |
 | Keyboard (latch, strobe, any-key-down, Open-Apple and Solid-Apple), VBL ($C019, the VBL interrupt) | |
-| Speaker ($C030) sampled at 48 kHz against machine time; Bluetooth speaker on the Pico | clicks counted on the Pico W; the Bluetooth speaker not yet heard (it did not answer pages on 2026-10-23) |
+| Speaker ($C030) sampled at 48 kHz against machine time; Bluetooth speaker on the Pico | Pico W, 2026-10-24: the PureMetal demo's tune streamed to the speaker, link live, 125 packets/s, 0 underruns over 40 s (`tests/demo_sound.txt`, private build) |
 | The built-in drive (IWM in Disk II mode, two drives): stepping, the DOS 3.3 track format, 6-and-2; .DSK/.DO, .PO, .NIB; .WOZ 1/2 (desktop, read as nibbles) | Pico W and desktop: this project's test disk boots and all 544 sectors of tracks 1-34 read back |
 | Serial ports, the mouse, the memory expansion card | not emulated (the serial ports answer "nothing received") |
 
@@ -54,7 +54,7 @@ SRAM when the head reaches the track; writes to it are dropped (counted in the s
 ```powershell
 # public firmware (test ROM), uploaded and checked under the board lease
 powershell -File tools/board.ps1 -Source rp2040/apple2c.picow -Output build/apple2c.uf2 -Script tests/testrom.txt
-# the private build: your ROM, a disk, the speaker
+# the private build: your ROM, a disk, the speaker (-Speaker also takes the shared SPEAKER lease)
 py -3 tools/make_private.py --rom <IIc ROM> --disk <disk.dsk>
 powershell -File tools/board.ps1 -Source private/apple2c.picow -Output private/apple2c.uf2
 py -3 tools/console.py --port COM7

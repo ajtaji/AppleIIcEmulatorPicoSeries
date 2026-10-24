@@ -1,0 +1,13 @@
+# The PureMetal demo with sound on the Bluetooth speaker (private build: the test ROM, the demo disk,
+# the speaker named). The connection is made at boot, before this script opens the port, so its state
+# is read from the status line. Short: the speaker is shared.
+wait 1
+screen 30 SOFT SWITCH TESTS: ALL PASS
+cmd s
+expect 5 bt_live=1
+type D
+screen 20 APPLE IIC  DEMO
+wait 12
+cmd s
+wait 1
+cmd d

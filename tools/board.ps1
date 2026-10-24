@@ -15,7 +15,8 @@ param(
   [string]$Script = '',          # a tools/board.py script run against the board after the upload
   [int]$ScriptSeconds = 60,
   [string]$Jobs = '',
-  [switch]$CompileOnly           # build and check the image's end, no board
+  [switch]$CompileOnly,          # build and check the image's end, no board
+  [switch]$Speaker               # also hold the SPEAKER lease (a job that plays to the Bluetooth speaker)
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -55,20 +56,33 @@ if ($CompileOnly) { exit 0 }
 . C:\PMFBuild\board-leases\lease.ps1
 $minutes = [Math]::Max($LeaseMinutes, ($list | ForEach-Object { $_.Seconds + $_.ScriptSeconds + 40 } | Measure-Object -Sum).Sum / 60)
 $l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes))
+$speakerLease = $null
 $worst = 0
 try {
+  # the Bluetooth speaker pairs with one board at a time: it has its own lease
+  if ($Speaker) { $speakerLease = Get-BoardLease -Port SPEAKER -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes)) }
   foreach ($job in $list) {
     Write-Output "==== $($job.Source) ($(Get-Date -Format HH:mm:ss))"
     $log = "$($job.out).board.log"
     $rc = Invoke-Pmf ('--compile "' + $job.src + '" -S -o "' + $job.out + '" --port ' + $Port + ' --seconds ' + $job.Seconds) $log
     Get-Content $log | Where-Object { $_ -notmatch '^\[DEBUG\]|^> |TELEMETRY|_RP20|_RP23|^pmfc:' }
     if ($rc -eq 0 -and $job.Script) {
-      $sp = [IO.Path]::GetFullPath((Join-Path $root $job.Script))
+      $scriptPath = [IO.Path]::GetFullPath((Join-Path $root $job.Script))
       Push-Location $root
-      try { & py -3 tools/board.py --port $Port --seconds $job.ScriptSeconds --script $sp --output "$($job.out).script.log"; $rc = $LASTEXITCODE }
+      try { & py -3 tools/board.py --port $Port --seconds $job.ScriptSeconds --script $scriptPath --output "$($job.out).script.log"; $rc = $LASTEXITCODE }
       finally { Pop-Location }
     }
     if ($rc -ne 0) { $worst = $rc; Write-Output "==== $($job.Source): exit $rc" }
   }
-} finally { Release-BoardLease $l }
+} finally {
+  if ($speakerLease) { Release-BoardLease $speakerLease }
+  Release-BoardLease $l
+  # a lease of ours must never outlive this script (one SPEAKER lease did on 2026-10-24, reason unknown)
+  foreach ($held in @($speakerLease, $l)) {
+    if ($held -and [IO.File]::Exists($held.Path)) {
+      $text = $null; try { $text = [IO.File]::ReadAllText($held.Path) } catch {}
+      if ($text -eq $held.Tag) { Remove-BoardLeaseFile $held.Path; Write-Output "LEASE $($held.Path) was still ours after release: removed" }
+    }
+  }
+}
 exit $worst
