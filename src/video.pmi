@@ -55,24 +55,32 @@ EndProcedure
 
 ; A hash of everything that decides the line's picture: the mode, the switches it depends on and
 ; the bytes it reads. A line whose hash has not changed need not be drawn again.
-Global VhAddr.i, VhI.i, VhH.i
+; The flashing phase counts only for a text line that holds a flashing character ($40-$7F in the
+; primary set), so a still screen without one is never sent again.
+Global VhAddr.i, VhI.i, VhH.i, VhB.i, VhFlash.i
 Procedure.l VideoLineHash(line.i)
   VMode = VideoLineMode(line)
   VhH = VMode * 7919 + VMono * 31 + A2AltChar * 131
+  VhFlash = 0
   If VMode <= #VM_DLORES
     VhAddr = A2TextRowAddr(line >> 3, VideoPage2())
-    If VMode <= #VM_TEXT80 : VhH = VhH + VFlash * 977 + (line & 7) : Else : VhH = VhH + (line & 4) : EndIf
+    If VMode <= #VM_TEXT80 : VhH = VhH + (line & 7) : Else : VhH = VhH + (line & 4) : EndIf
   Else
     VhAddr = VideoHiresAddr(line)
   EndIf
   For VhI = 0 To 39
-    VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! A2Peek(0, VhAddr + VhI)
+    VhB = A2Peek(0, VhAddr + VhI)
+    VhFlash = VhFlash | Bool((VhB & $C0) = $40)
+    VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! VhB
   Next
   If VMode = #VM_TEXT80 Or VMode = #VM_DLORES Or VMode = #VM_DHIRES
     For VhI = 0 To 39
-      VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! A2Peek(1, VhAddr + VhI)
+      VhB = A2Peek(1, VhAddr + VhI)
+      VhFlash = VhFlash | Bool((VhB & $C0) = $40)
+      VhH = ((VhH << 5) | ((VhH >> 27) & 31)) ! VhB
     Next
   EndIf
+  If VhFlash And VMode <= #VM_TEXT80 And A2AltChar = 0 : VhH = VhH + VFlash * 977 : EndIf
   ProcedureReturn VhH
 EndProcedure
 

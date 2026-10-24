@@ -447,6 +447,8 @@ SHOWKEY:
         ldy #4
         sta (BAS),y          ; BAS is where the text began: the key goes after "KEY "
         iny
+        lda #$A0             ; a space between the key and its code
+        sta (BAS),y
         iny
         lda #$A4             ; '$'
         sta (BAS),y
