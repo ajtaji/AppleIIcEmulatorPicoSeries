@@ -22,12 +22,12 @@ around your own ROM file and disk image.
 | Part | State |
 |---|---|
 | 65C02 (Rockwell R65C02: the CMOS instructions and modes, BBR/BBS/RMB/SMB, undefined opcodes as the silicon's NOPs, CMOS decimal mode), cycle counts | Pico W: 3072 SingleStepTests vectors and both Klaus Dormann tests; desktop: 87053 vectors and both Klaus tests |
-| 128 KB: main and auxiliary banks, 80STORE, RAMRD, RAMWRT, ALTZP, the language card (both $D000 banks, pre-write), the ROM's two banks at $C028 (32 KB ROMs) | desktop: the test ROM's checks pass |
-| Video: 40/80-column text with inverse, flashing, lower case and MouseText; lo-res, double lo-res, hi-res, double hi-res, mixed; PAGE2 | desktop: every mode drawn |
+| 128 KB: main and auxiliary banks, 80STORE, RAMRD, RAMWRT, ALTZP, the language card (both $D000 banks, pre-write), the ROM's two banks at $C02x (32 KB ROMs) | Pico W and desktop: the test ROM's checks pass |
+| Video: 40/80-column text with inverse, flashing, lower case and MouseText; lo-res, double lo-res, hi-res, double hi-res, mixed; PAGE2 | Pico W (captured from the panel's renderer) and desktop: every mode drawn |
 | Colour: NTSC artifact colour from the dot stream (see below); a monochrome switch | |
 | Keyboard (latch, strobe, any-key-down, Open-Apple and Solid-Apple), VBL ($C019, the VBL interrupt) | |
-| Speaker ($C030) sampled at 48 kHz against machine time | |
-| The built-in drive (IWM in Disk II mode, two drives): stepping, the DOS 3.3 track format, 6-and-2; .DSK/.DO, .PO, .NIB; .WOZ 1/2 (desktop, read as nibbles) | desktop: this project's test disk boots and all 544 sectors of tracks 1-34 read back |
+| Speaker ($C030) sampled at 48 kHz against machine time; Bluetooth speaker on the Pico | clicks counted on the Pico W; the Bluetooth speaker not yet heard (it did not answer pages on 2026-10-23) |
+| The built-in drive (IWM in Disk II mode, two drives): stepping, the DOS 3.3 track format, 6-and-2; .DSK/.DO, .PO, .NIB; .WOZ 1/2 (desktop, read as nibbles) | Pico W and desktop: this project's test disk boots and all 544 sectors of tracks 1-34 read back |
 | Serial ports, the mouse, the memory expansion card | not emulated (the serial ports answer "nothing received") |
 
 ### Colour
@@ -85,6 +85,8 @@ click a line to break there, the stack), Switches, Memory (as the CPU sees it, m
 | | |
 |---|---|
 | Pico W, 65C02 core alone (Klaus tests) | 6.7-7.3 MHz of 65C02 time, about 7x a IIc |
+| Pico W, whole machine paced (test ROM) | 59.92 frames/s, 1020 kHz, core 0 22% busy |
+| Pico W, whole machine unthrottled (monitor `f`, the test disk being read) | 5.36 MHz = 5.2x a IIc |
 | Desktop, 65C02 core alone (6502 functional test, 30,646,176 instructions) | 175 M instructions/s (C computed goto), 172 M through a procedure table |
 | Desktop, whole machine paced | 60.0 frames/s, 1.02 MHz |
 
