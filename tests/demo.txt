@@ -1,0 +1,12 @@
+# The PureMetal demo booted from its own disk by the test ROM: the title and the scroller on the screen,
+# the speaker clicking (the tune), the picture captured from the panel's renderer.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+type D
+screen 20 APPLE IIC  DEMO
+wait 5
+cmd s
+expect 5 clicks=[1-9][0-9][0-9]
+capture build/board_demo.png
+wait 3
+cmd s

@@ -1,7 +1,7 @@
 ﻿; Console check of the desktop machine: the CPU suites, then the Apple IIc for a number of frames.
 ;
 ;   apple2c_check.exe [--cpu-tests] [--rom file] [--disk1 file] [--disk2 file] [--frames N]
-;                     [--type-at FRAME TEXT]... [--png out.png] [--expect TEXT] [--mono] [--full-speed]
+;                     [--type-at FRAME TEXT]... [--png out.png] [--expect TEXT] [--mono] [--click-times]
 ;
 ; TEXT: "\r" is Return. Prints the text screen at the end, the frames per second it ran at (unthrottled),
 ; and with --expect exits 1 unless TEXT is on the screen. --png saves the picture (560 x 384).
@@ -16,7 +16,7 @@ EndStructure
 Global NewList Typing.CheckType()
 
 OpenConsole()
-Define k.i, a$, rom$, frames.i = 120, png$, expect$, cpuTests.i, r$, f.i, t.q, screen$, i.i, c$
+Define clickMark.i = 1000, clickReport.i, k.i, a$, rom$, frames.i = 120, png$, expect$, cpuTests.i, r$, f.i, t.q, screen$, i.i, c$
 Dim disks$(3)
 For k = 0 To CountProgramParameters() - 1
   a$ = ProgramParameter(k)
@@ -29,6 +29,7 @@ For k = 0 To CountProgramParameters() - 1
     Case "--png" : k + 1 : png$ = ProgramParameter(k)
     Case "--expect" : k + 1 : expect$ = ProgramParameter(k)
     Case "--mono" : VMono = 1
+    Case "--click-times" : clickReport = 1
     Case "--type-at"
       AddElement(Typing())
       k + 1 : Typing()\frame = Val(ProgramParameter(k))
@@ -64,6 +65,10 @@ For f = 1 To frames
     EndIf
   Next
   A2RunFrame()
+  If clickReport And A2SpeakerClicks >= clickMark
+    PrintN("clicks " + Str(A2SpeakerClicks) + " by cycle " + Str(CpuCycles))
+    clickMark + 1000
+  EndIf
 Next
 t = ElapsedMilliseconds() - t
 If t < 1 : t = 1 : EndIf

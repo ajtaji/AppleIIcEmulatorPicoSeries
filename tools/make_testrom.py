@@ -42,6 +42,53 @@ JUMPS = '''
         jmp LOOP             ; $CF06
         jmp DISKON           ; $CF09
         jmp SHOWKEY          ; $CF0C
+
+; The boot page, where a IIc's firmware boots its drive (slot 6's $C600), and the two entry points a
+; booting disk calls in the IIc's ROM, written here from what they do (no Apple code):
+;   $C65C  read physical sector $3D of the track under the head into ($26), checking the address
+;          field's track against $41; then $27 and $3D up by one, and on at $0801 (X = $2B) once $3D
+;          reaches the count in $0800, else the next sector. DOS 3.3's boot uses it, and so do the
+;          disks PureMetal's Apple IIc board writes.
+;   $FCA8  the monitor's WAIT: a delay that grows with A (A is 0 after it).
+        .org $C600
+SLOTBOOT: jsr DISKON         ; drive 1, the motor, head to track 0
+        lda #$60
+        sta $2B
+        lda #0
+        sta $26
+        sta $3D
+        sta $41
+        lda #$08
+        sta $27
+        .fill $C65C-*, $FF
+RDSECT: lda $41              ; $C65C
+        sta WTRK
+        lda $3D
+        sta WSEC
+        lda $26
+        sta DEST
+        lda $27
+        sta DEST+1
+        jsr RDHERE
+        bcs RDSECT           ; not found, or a bad checksum: again
+        inc $3D              ; the next sector, into the next page
+        inc $27
+        ldx $2B
+        lda $3D
+        cmp $0800
+        bcc RDSECT
+        jmp $0801
+
+        .org $FCA8
+MWAIT:  phy
+        tay
+MW1:    tya
+MW2:    dec a
+        bne MW2
+        dey
+        bne MW1
+        ply
+        rts
 '''
 LINE80 = 'Eighty columns: even ones from the auxiliary bank, odd from main. 0123456789'
 LINE80 = (LINE80 + ' ' * 80)[:80]
@@ -373,6 +420,9 @@ MENU:   lda #18
         lda #<T_MENU3
         ldx #>T_MENU3
         jmp PRINT
+
+CODE1_END:
+        .org $D001           ; the rest after $D000 (the ROM byte the language card check reads)
 
 ; ---------------------------------------------------------------- the key loop
 LOOP:   lda KBD
@@ -788,7 +838,8 @@ RD44:   jsr RDN
 
 ; READSEC: physical sector WSEC of track WTRK into (DEST). Carry clear = read, set = failed.
 READSEC: jsr SEEK
-        lda #48
+; RDHERE: the same on the track under the head, without seeking.
+RDHERE: lda #48
         sta TRIES
 RS1:    dec TRIES
         bne RS2
@@ -879,7 +930,7 @@ RSOK:   clc
 RSBAD:  sec
         rts
 
-; BOOT: physical sector 0 of track 0 to $0800 and on at $0801, as a IIc does it (with our own reader).
+; BOOT (key D): the message, then the boot page at $C600 (SLOTBOOT), as a IIc boots its drive.
 BOOT:   lda #13
         sta ROW
         lda #0
@@ -887,27 +938,10 @@ BOOT:   lda #13
         lda #<T_BOOT
         ldx #>T_BOOT
         jsr PRINT
-        jsr DISKON
-        lda #0
-        sta WTRK
-        sta WSEC
-        sta DEST
-        lda #8
-        sta DEST+1
-        jsr READSEC
-        bcs BOOTBAD
-        ldx #$60
-        jmp $0801
-BOOTBAD: lda DMOTOFF
-        lda #<T_NOBOOT
-        ldx #>T_NOBOOT
-        jsr PRINT
-        jmp LOOP
+        jmp SLOTBOOT
 
 SWAP2:  .byte 0, 2, 1, 3
 T_BOOT: .text "BOOTING DRIVE 1... "
-        .byte 0
-T_NOBOOT: .text "NO DISK"
         .byte 0
 
 HEXCH:  .text "0123456789ABCDEF"
@@ -947,7 +981,9 @@ def main():
     (ROOT / 'build/testrom.s').write_text(src)
     lo, blob, labels, listing = assemble(src)
     assert lo == 0xC000, hex(lo)
-    assert labels['TABLES_END'] <= 0xCF00, 'the code and tables no longer fit below the jump table at $CF00'
+    assert labels['CODE1_END'] <= 0xC600, 'the self-tests no longer fit below the boot page at $C600'
+    assert labels['TABLES_END'] <= 0xFCA8, 'the code and tables no longer fit below WAIT at $FCA8'
+    assert labels['RDSECT'] == 0xC65C and labels['MWAIT'] == 0xFCA8
     blob = blob + b'\xff' * (0x4000 - len(blob))
     assert len(blob) == 0x4000
     (ROOT / 'build/testrom.lst').write_text(listing + '\n')

@@ -20,3 +20,10 @@ build/
 *.err
 desktop/*.exe
 __pycache__/
+
+# the demo's build output (PureMetalForge writes them beside the source)
+demo/*.hex
+demo/*.bin
+demo/*#*
+demo/*.txt
+demo/build.*
