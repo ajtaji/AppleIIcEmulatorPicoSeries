@@ -94,6 +94,7 @@ click a line to break there, the stack), Switches, Memory (as the CPU sees it, m
 | Pico W, 65C02 core alone (Klaus tests) | 6.7-7.3 MHz of 65C02 time, about 7x a IIc |
 | Pico W, whole machine paced (test ROM) | 59.92 frames/s, 1020 kHz, core 0 22% busy |
 | Pico W, whole machine unthrottled (monitor `f`, the test disk being read) | 5.36 MHz = 5.2x a IIc |
+| Pico W with the IIc ROM 4, Tubers of Fate waiting for a key: paced / unthrottled | 1020 kHz, core 0 13% busy / 7.77 MHz = 7.6x a IIc |
 | Pico 2 W (150 MHz), 65C02 core alone / whole machine unthrottled | 6.0-6.5 MHz / 5.16 MHz |
 | Desktop, 65C02 core alone (6502 functional test, 30,646,176 instructions) | 175 M instructions/s (C computed goto), 172 M through a procedure table |
 | Desktop, whole machine paced | 60.0 frames/s, 1.02 MHz |
