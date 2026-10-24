@@ -19,7 +19,7 @@ around your own ROM file and disk image.
 
 ## With an Apple IIc ROM (your own file, through tools/make_private.py)
 
-Tested 2026-10-24 with the IIc's ROM 4 (342-0445-B, 32 KB): the IIc starts ("Apple //c", the beep),
+Tested 2026-10-24 with the IIc's ROM 4 (341-0445-B, 32 KB): the IIc starts ("Apple //c", the beep),
 Ctrl+Reset gives Applesoft (`]PRINT 2+3` answers 5), and DOS 3.3 disks boot and run: Tubers of Fate
 (an Applesoft adventure, 2022) and Escape From the Homebrew Computer Club (a hi-res 3D maze, 2007) on
 the desktop; Tubers of Fate on the Pico W's panel, with the IIc's sound on the Bluetooth speaker.
