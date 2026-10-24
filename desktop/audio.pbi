@@ -24,7 +24,17 @@ CompilerIf #PB_Compiler_OS = #PB_OS_Windows
   Global Dim WoHeaders.WoHeader(#WO_BUFFERS)
   Global Dim WoData.w(#WO_BUFFERS * #WO_SAMPLES)
 CompilerEndIf
-Global WoOpen.i, WoMuted.i, WoUnderruns.i, WoQueued.i, WoCursor.i, WoLast.w
+Global WoOpen.i, WoMuted.i, WoUnderruns.i, WoQueued.i, WoCursor.i, WoLast.w, WoThread.i, WoQuit.i
+
+Declare.i WoPump()
+; The sound card is fed from its own thread every 4 ms: waveOut's calls can take milliseconds (an audio
+; driver's hooks), and they must not hold up the window. It only reads the ring the machine writes.
+Procedure WoThreadMain(*unused)
+  Repeat
+    WoPump()
+    Delay(4)
+  Until WoQuit
+EndProcedure
 
 Procedure.i WoBegin()
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
@@ -38,6 +48,7 @@ Procedure.i WoBegin()
       WoHeaders(i)\dwFlags = #WO_DONE
     Next
     WoOpen = 1 : SoundOn = 1 : WoCursor = SoundSamples
+    WoThread = CreateThread(@WoThreadMain(), 0)
     ProcedureReturn 1
   CompilerElse
     ProcedureReturn 0
@@ -49,8 +60,8 @@ Procedure.i WoPump()
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     Protected i.i, k.i, *dst, queued.i
     If WoOpen = 0 : ProcedureReturn 0 : EndIf
-    ; never fall more than the ring behind
-    If SoundSamples - WoCursor > #SOUND_RING - #WO_SAMPLES : WoCursor = SoundSamples - #WO_SAMPLES : EndIf
+    ; never fall more than the ring behind, and never more than 4 buffers (85 ms): a late card catches up
+    If SoundSamples - WoCursor > #WO_BUFFERS * #WO_SAMPLES : WoCursor = SoundSamples - #WO_SAMPLES : EndIf
     For i = 0 To #WO_BUFFERS - 1
       If WoHeaders(i)\dwFlags & #WO_DONE
         If WoHeaders(i)\dwFlags & 2 : waveOutUnprepareHeader_(WoHandle, @WoHeaders(i), SizeOf(WoHeader)) : EndIf
@@ -80,6 +91,8 @@ EndProcedure
 Procedure WoEnd()
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     Protected i.i
+    WoQuit = 1
+    If WoThread : WaitThread(WoThread) : WoThread = 0 : EndIf
     If WoHandle
       waveOutReset_(WoHandle)
       For i = 0 To #WO_BUFFERS - 1 : waveOutUnprepareHeader_(WoHandle, @WoHeaders(i), SizeOf(WoHeader)) : Next

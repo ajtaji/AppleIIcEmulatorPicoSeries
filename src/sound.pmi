@@ -9,7 +9,7 @@
 ; The real cone does not hold a level for ever: after 1024 samples (21 ms) without a click the level
 ; returns to 0, so a speaker left on one side is silence, not a constant offset.
 
-#SOUND_RING = 4096                       ; samples, a power of two (85 ms)
+; #SOUND_RING (samples, a power of two) is the includer's: 4096 (85 ms) on the Picos, more on the desktop.
 #SOUND_AMPLITUDE = 6000
 
 Global Dim SoundRing.w(#SOUND_RING)

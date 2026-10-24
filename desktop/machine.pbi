@@ -1,5 +1,6 @@
 ; The machine for the desktop programs: the 65C02 core (generated, desktop/cpu65c02.pbi) and the Pico's
 ; own machine source (src/*.pmi), included unchanged, then the desktop's host side.
+#SOUND_RING = 16384                       ; the speaker ring: 341 ms, room for the window catching up
 XIncludeFile "cpu65c02.pbi"
 XIncludeFile "../src/machine.pmi"
 XIncludeFile "../src/sound.pmi"

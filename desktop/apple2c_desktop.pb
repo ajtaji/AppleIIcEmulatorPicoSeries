@@ -35,6 +35,7 @@ Global EmuAccum.d, EmuLastUs.q, EmuFrameUs.d = 1000000.0 * 17030.0 / 1020484.0
 Global FpsShown.d, FpsFrames.i, FpsSince.q, MhzShown.d, CyclesSince.i
 Global ActiveTab.i, StatusLine$, LastFolder$
 Global LastDraw.q, ShotFile$, ShotAtMs.q
+Global TickUsSum.q, EmuUsSum.q, TickCount.i, TickMsShown.d, EmuMsShown.d
 
 Global HostTimerFreq.q, HostTimerStart.q
 Procedure.q HostUs()
@@ -149,15 +150,13 @@ Procedure Emulate()
     EmuLastUs = HostUs() : EmuAccum = 0
     ProcedureReturn
   EndIf
+  ; the machine keeps a real IIc's pace however long the window takes to draw (up to 12 frames a pass);
+  ; the sound card is fed by its own thread (audio.pbi), never from here
   EmuAccum + (now - EmuLastUs) : EmuLastUs = now
-  If EmuAccum > EmuFrameUs * 4 : EmuAccum = EmuFrameUs * 4 : EndIf
-  While EmuAccum >= EmuFrameUs And n < 3 And Paused = 0
+  If EmuAccum > EmuFrameUs * 12 : EmuAccum = EmuFrameUs * 12 : EndIf
+  While EmuAccum >= EmuFrameUs And n < 12 And Paused = 0
     RunOneFrame() : EmuAccum - EmuFrameUs : n + 1 : FpsFrames + 1
   Wend
-  ; keep the sound card fed: one more frame when its queue runs low
-  If WoOpen And Paused = 0 And WoPump() < #WO_SAMPLES And n < 3 And SoundSamples - WoCursor < #WO_SAMPLES
-    RunOneFrame() : FpsFrames + 1 : EmuAccum - EmuFrameUs
-  EndIf
 EndProcedure
 
 Procedure StepInstruction()
@@ -222,9 +221,12 @@ Procedure Tick()
       A2SolidApple = Bool(GetAsyncKeyState_(#VK_RMENU) & $8000)
     EndIf
   CompilerEndIf
+  Protected tEmu.q = HostUs()
   Emulate()
-  If WoOpen : WoPump() : EndIf
+  EmuUsSum + HostUs() - tEmu
   If now - FpsSince >= 1000
+    If TickCount : TickMsShown = TickUsSum / (TickCount * 1000.0) : EmuMsShown = EmuUsSum / (TickCount * 1000.0) : EndIf
+    TickUsSum = 0 : EmuUsSum = 0 : TickCount = 0
     FpsShown = FpsFrames * 1000.0 / (now - FpsSince) : FpsFrames = 0
     MhzShown = (CpuCycles - CyclesSince) / ((now - FpsSince) * 1000.0) : CyclesSince = CpuCycles
     FpsSince = now
@@ -265,7 +267,7 @@ Procedure Tick()
   If Neon_Button(x, 6 * s, 70 * s, toolH - 12 * s, label$, VMono) : VMono = 1 - VMono : MachineForce = 1 : EndIf : x + 76 * s
   label$ = "Mute" : If WoMuted : label$ = "Sound" : EndIf
   If Neon_Button(x, 6 * s, 64 * s, toolH - 12 * s, label$, WoMuted) : WoMuted = 1 - WoMuted : EndIf : x + 70 * s
-  Neon_Text(*Neon_FontMono, x + 8 * s, toolH / 2 - 8 * s, StrD(FpsShown, 1) + " fps  " + StrD(MhzShown, 2) + " MHz (" + Str(MhzShown * 100 / 1.020484) + "% of a IIc)   " + StatusLine$, Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
+  Neon_Text(*Neon_FontMono, x + 8 * s, toolH / 2 - 8 * s, StrD(FpsShown, 1) + " fps  " + StrD(MhzShown, 2) + " MHz (" + Str(MhzShown * 100 / 1.020484) + "% of a IIc)  window " + StrD(TickMsShown, 1) + " ms, machine " + StrD(EmuMsShown, 1) + " ms   " + StatusLine$, Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
 
   ; the screen: 560 x 384 at the largest size that fits beside the panel
   side = Round(620 * s, #PB_Round_Nearest)
@@ -289,11 +291,12 @@ Procedure Tick()
   Neon_ChromeEndFrame()
   If ShotFile$ <> "" And now >= ShotAtMs : SaveWindowShot(ShotFile$) : Quit = 1 : EndIf
   SetGadgetAttribute(Gl, #PB_OpenGL_FlipBuffers, #True)
+  TickUsSum + HostUs() - tEmu : TickCount + 1
 EndProcedure
 
 ; ---------------------------------------------------------------- main
 Procedure Main()
-  Protected ev.i, et.i, k.i, rom$, r$, type$, i.i, runTests.i
+  Protected ev.i, et.i, k.i, rom$, r$, type$, i.i, runTests.i, noSound.i
   Protected Dim disk$(3)
   UiScale = DesktopResolutionX() : If UiScale < 1 : UiScale = 1 : EndIf
   For k = 0 To CountProgramParameters() - 1
@@ -303,6 +306,7 @@ Procedure Main()
       Case "--disk2" : k + 1 : disk$(2) = ProgramParameter(k)
       Case "--mono" : VMono = 1
       Case "--mute" : WoMuted = 1
+      Case "--nosound" : noSound = 1
       Case "--tests" : runTests = 1
       Case "--tab" : k + 1 : ActiveTab = Val(ProgramParameter(k))
       Case "--type" : k + 1 : type$ = ReplaceString(ProgramParameter(k), "\r", #CR$)
@@ -328,7 +332,7 @@ Procedure Main()
       If r$ <> "" : MessageRequester("Apple IIc", r$) : EndIf
     EndIf
   Next
-  WoBegin()
+  If noSound = 0 : WoBegin() : EndIf
   PowerOn()
   If runTests : ViewRunTests() : EndIf
   For i = 1 To Len(type$) : A2KeyPut(Asc(Mid(type$, i, 1))) : Next

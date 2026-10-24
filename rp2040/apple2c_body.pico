@@ -9,6 +9,7 @@ XIncludeFile "RP2040/Lib/usb_serial.pico"
 XIncludeFile "RP2040/Lib/safety.pico"
 XIncludeFile "RP2040/Lib/spi.pico"
 XIncludeFile "RP2040/Lib/st7796.pico"
+#SOUND_RING = 4096                       ; the speaker ring, samples (85 ms)
 XIncludeFile "../src/cpu65c02.pmi"
 XIncludeFile "../src/machine.pmi"
 XIncludeFile "../src/sound.pmi"
