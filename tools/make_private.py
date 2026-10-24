@@ -1,6 +1,8 @@
 """Build the private firmware wrappers (private/ is ignored by git; nothing here is ever committed):
 
-    py -3 tools/make_private.py --rom <your Apple IIc ROM> [--disk <.dsk/.do/.po/.nib>] [--no-sound]
+    py -3 tools/make_private.py [--rom <your Apple IIc ROM>] [--disk <.dsk/.do/.po/.nib>] [--no-sound]
+
+Without --rom the firmware runs this project's test ROM (its B key beeps: a test of the speaker path).
 
 Writes:
   private/rom_data.pmi      the ROM as a DataSection (A2RomData, #A2_ROM_BYTES = 16384 or 32768)
@@ -16,6 +18,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from lzpack import pack_image
 NES_PRIVATE = ROOT / 'private' / 'speaker-source.picow'
 
 def data_lines(label, blob):
@@ -26,18 +30,20 @@ def data_lines(label, blob):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--rom', required=True)
+    p.add_argument('--rom')
     p.add_argument('--disk')
     p.add_argument('--no-sound', action='store_true')
     a = p.parse_args()
     priv = ROOT / 'private'
     priv.mkdir(exist_ok=True)
-    rom = Path(a.rom).read_bytes()
-    if len(rom) not in (16384, 32768):
-        sys.exit(f'{a.rom} is {len(rom)} bytes; an Apple IIc ROM is 16384 (ROM 255) or 32768 (ROM 0, 3, 4)')
-    (priv / 'rom_data.pmi').write_text('\n'.join(
-        ['; PRIVATE: the Apple IIc ROM (Apple\'s code; never committed).', f'#A2_ROM_BYTES = {len(rom)}',
-         'DataSection'] + data_lines('A2RomData', rom) + ['EndDataSection']) + '\n')
+    rom = b''
+    if a.rom:
+        rom = Path(a.rom).read_bytes()
+        if len(rom) not in (16384, 32768):
+            sys.exit(f'{a.rom} is {len(rom)} bytes; an Apple IIc ROM is 16384 (ROM 255) or 32768 (ROM 0, 3, 4)')
+        (priv / 'rom_data.pmi').write_text('\n'.join(
+            ['; PRIVATE: the Apple IIc ROM (Apple\'s code; never committed).', f'#A2_ROM_BYTES = {len(rom)}',
+             'DataSection'] + data_lines('A2RomData', rom) + ['EndDataSection']) + '\n')
     disk_kind = 0
     if a.disk:
         d = Path(a.disk).read_bytes()
@@ -52,9 +58,12 @@ def main():
             disk_kind = 3
         else:
             sys.exit(f'{a.disk}: the boards take .dsk .do .po .nib (the desktop also reads .woz)')
+        packed = pack_image(d, 6656 if disk_kind == 3 else 4096)
+        print(f'disk: {len(d)} bytes, packed {len(packed)}')
         (priv / 'disk_data.pmi').write_text('\n'.join(
-            ['; PRIVATE: the disk in drive 1 (never committed).', f'#A2_DISK_KIND = {disk_kind}',
-             'DataSection'] + data_lines('A2DiskData', d) + ['EndDataSection']) + '\n')
+            ['; PRIVATE: the disk in drive 1, packed a track at a time (never committed).',
+             f'#A2_DISK_KIND = {disk_kind}',
+             'DataSection'] + data_lines('A2DiskData', packed) + ['EndDataSection']) + '\n')
     speaker = None
     if not a.no_sound:
         m = re.search(r'PackBluetoothPeer:\s*\n\s*(Data\.a [^\n]+)', NES_PRIVATE.read_text())
@@ -63,11 +72,13 @@ def main():
         speaker = m.group(1)
     for chip, body, ext in (('Pico W', '../rp2040/apple2c_body.pico', 'picow'),
                             ('Pico 2 W', '../rp2350/apple2c_body.pico2', 'pico2w')):
-        lines = [f'; PRIVATE (private/ is ignored by git): the Apple IIc for the {chip} with its ROM'
-                 + (', a disk' if disk_kind else '') + (' and sound' if speaker else '') + '.',
-                 '#CPU_ASM_TAIL = 1', '#A2_ROM = 1', f'#A2_DISK = {1 if disk_kind else 0}',
-                 f'#A2_AUDIO = {1 if speaker else 0}',
-                 'XIncludeFile "rom_data.pmi"']
+        lines = [f'; PRIVATE (private/ is ignored by git): the Apple IIc for the {chip} with '
+                 + ('its ROM' if rom else 'the test ROM') + (', a disk' if disk_kind else '')
+                 + (' and sound' if speaker else '') + '.',
+                 '#CPU_ASM_TAIL = 1', f'#A2_ROM = {1 if rom else 0}', f'#A2_DISK = {1 if disk_kind else 0}',
+                 f'#A2_AUDIO = {1 if speaker else 0}']
+        if rom:
+            lines.append('XIncludeFile "rom_data.pmi"')
         if disk_kind:
             lines.append('XIncludeFile "disk_data.pmi"')
         lines.append(f'XIncludeFile "{body}"')
@@ -75,7 +86,7 @@ def main():
             lines += ['DataSection', 'A2Speaker:', '  ' + speaker, 'EndDataSection', 'A2AudioPeer(?A2Speaker)']
         lines.append('Main()')
         (priv / f'apple2c.{ext}').write_text('\n'.join(lines) + '\n')
-    print(f'private build: ROM {len(rom)} bytes, disk kind {disk_kind}, sound {"on" if speaker else "off"}')
+    print(f'private build: ROM {len(rom) or "test"} bytes, disk kind {disk_kind}, sound {"on" if speaker else "off"}')
 
 if __name__ == '__main__':
     main()

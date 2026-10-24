@@ -156,15 +156,18 @@ Procedure A2PowerOn()
   For b = 0 To 15
     For i = 0 To 8191 : PokeA(A2Block(b) + i, 0) : Next
   Next
-  A2RomBank = 0
+  A2Text = 1 : A2Mixed = 0 : A2DHires = 0
 EndProcedure
 
-; The RESET line (Ctrl+Reset, and power on): the IOU and MMU switches go to their reset state.
+; The RESET line (Ctrl+Reset, and power on): the switches RESET clears (Sather, "Understanding the
+; Apple IIe", fig. 7.1 and 5.13, as MAME's apple2e.cpp applies them to the IIc): 80STORE, 80COL,
+; ALTCHAR, PAGE2, HIRES, RAMRD, RAMWRT, ALTZP off; IOUDIS on; the ROM's first bank; the language card
+; reading ROM and writing RAM, bank 2. TEXT, MIXED and DHIRES are not reset.
 Procedure A2Reset()
   A2Store80 = 0 : A2RamRd = 0 : A2RamWrt = 0 : A2AltZp = 0 : A2Col80 = 0 : A2AltChar = 0
-  A2Text = 1 : A2Mixed = 0 : A2Page2 = 0 : A2Hires = 0 : A2DHires = 0 : A2IouDis = 1
-  A2LcRead = 0 : A2LcWrite = 0 : A2LcBank2 = 1 : A2LcPrewrite = 0
-  A2VblEnable = 0 : A2VblFlag = 0
+  A2Page2 = 0 : A2Hires = 0 : A2IouDis = 1 : A2RomBank = 0
+  A2LcRead = 0 : A2LcWrite = 1 : A2LcBank2 = 1 : A2LcPrewrite = 0
+  A2VblEnable = 0 : A2VblFlag = 0 : CpuIrqLine = 0
   A2MapAll()
 EndProcedure
 
@@ -249,13 +252,26 @@ Procedure A2VideoSwitch(addr.i)
     Case 7
       A2Hires = 1
       If A2Store80 : A2MapMain($20, $3F) : EndIf
-    Case $A : A2VblEnable = 0 : CpuIrqLine = 0
-    Case $B : A2VblEnable = 1
-    Case $E
-      If A2IouDis : A2DHires = 1 : EndIf
-    Case $F
-      If A2IouDis : A2DHires = 0 : EndIf
+    Default
+      ; $C058-$C05F: with IOUDIS on, only $C05E / $C05F (double hi-res on / off); with it off, the
+      ; mouse's interrupt controls, of which the VBL interrupt enable is emulated (MAME apple2e do_io)
+      If A2IouDis
+        If (addr & 15) = $E : A2DHires = 1 : ElseIf (addr & 15) = $F : A2DHires = 0 : EndIf
+      ElseIf (addr & 15) = $A
+        A2VblEnable = 0 : A2VblFlag = 0 : CpuIrqLine = 0
+      ElseIf (addr & 15) = $B
+        A2VblEnable = 1
+      EndIf
   EndSelect
+EndProcedure
+
+; $C070-$C07F, any access: the paddle trigger, which on the IIc also clears the VBL interrupt; a write
+; to an even address sets IOUDIS, to an odd one clears it.
+Procedure A2IouAccess(addr.i, isWrite.i)
+  A2VblFlag = 0 : CpuIrqLine = 0
+  If isWrite And (addr & 15) >= 8
+    A2IouDis = Bool((addr & 1) = 0)
+  EndIf
 EndProcedure
 
 Global A2IoValue.i
@@ -275,7 +291,9 @@ Procedure.i CpuBusRead(addr.i)
         Case 4 : A2IoValue = A2Flag(A2RamWrt)
         Case 6 : A2IoValue = A2Flag(A2AltZp)
         Case 8 : A2IoValue = A2Flag(A2Store80)
-        Case 9 : A2IoValue = A2Flag(Bool(A2FrameCycle + CpuElapsed() < #A2_VBL_CYCLE))
+        Case 5 : A2IoValue = A2Flag(0)          ; the mouse's X0 interrupt flag (no mouse)
+        Case 7 : A2IoValue = A2Flag(0)          ; the mouse's Y0 interrupt flag
+        Case 9 : A2IoValue = A2Flag(A2VblFlag)  ; the IIc's VBLINT, not the IIe's VBLBAR (IIc Tech Note 9)
         Case $A : A2IoValue = A2Flag(A2Text)
         Case $B : A2IoValue = A2Flag(A2Mixed)
         Case $C : A2IoValue = A2Flag(A2Page2)
@@ -284,27 +302,32 @@ Procedure.i CpuBusRead(addr.i)
         Case $F : A2IoValue = A2Flag(A2Col80)
       EndSelect
     Case 2
-      If (addr & 15) = 8 And A2RomBytes > 16384
+      ; any of $C020-$C02F switches the ROM's bank on a 32 KB ROM
+      If A2RomBytes > 16384
         A2RomBank = A2RomBank ! 1
         A2MapRomC() : A2MapZpLc()
       EndIf
     Case 3
       A2SpeakerClick()
+    Case 4
+      If (addr & 15) = 1 : A2IoValue = (A2IoValue & $7F) | (A2VblEnable << 7) : EndIf   ; the VBL mask
     Case 5
       A2VideoSwitch(addr)
     Case 6
-      Select addr & 15
-        Case 1 : A2IoValue = A2OpenApple << 7
-        Case 2 : A2IoValue = A2SolidApple << 7
-        Case 3 : A2IoValue = $80     ; the mouse button, up
-        Default : A2IoValue = 0      ; the 80/40 switch and the paddle timers
+      Select addr & 7
+        Case 1 : A2IoValue = A2IoValue | (A2OpenApple << 7)
+        Case 2 : A2IoValue = A2IoValue | (A2SolidApple << 7)
+        Case 3 : A2IoValue = A2IoValue | $80   ; the mouse button, up
       EndSelect
     Case 7
-      Select addr & 15
-        Case 0 : A2VblFlag = 0 : CpuIrqLine = 0   ; PTRIG also clears the VBL interrupt
-        Case $E : A2IoValue = A2Flag(A2IouDis)
-        Case $F : A2IoValue = A2Flag(A2DHires)
-      EndSelect
+      A2IouAccess(addr, 0)
+      If (addr & 15) >= 8
+        If addr & 1
+          A2IoValue = (A2IoValue & $7F) | ((A2DHires ! 1) << 7)   ; DHIRES reads inverted
+        Else
+          A2IoValue = A2Flag(A2IouDis)
+        EndIf
+      EndIf
     Case 8
       A2LanguageCard(addr, 0)
     Case 9
@@ -338,7 +361,7 @@ Procedure CpuBusWrite(addr.i, value.i)
     Case 1
       If (addr & 15) = 0 : A2Key = A2Key & $7F : EndIf
     Case 2
-      If (addr & 15) = 8 And A2RomBytes > 16384
+      If A2RomBytes > 16384
         A2RomBank = A2RomBank ! 1
         A2MapRomC() : A2MapZpLc()
       EndIf
@@ -347,11 +370,7 @@ Procedure CpuBusWrite(addr.i, value.i)
     Case 5
       A2VideoSwitch(addr)
     Case 7
-      Select addr & 15
-        Case 0 : A2VblFlag = 0 : CpuIrqLine = 0
-        Case $E : A2IouDis = 1
-        Case $F : A2IouDis = 0
-      EndSelect
+      A2IouAccess(addr, 1)
     Case 8
       A2LanguageCard(addr, 1)
     Case $E
@@ -368,8 +387,10 @@ EndProcedure
 
 ; The video's vertical blank begins: the VBL flag, and its interrupt when enabled.
 Procedure A2VblStart()
-  A2VblFlag = 1
-  CpuIrqLine = A2VblEnable
+  If A2VblEnable
+    A2VblFlag = 1
+    CpuIrqLine = 1
+  EndIf
 EndProcedure
 
 Declare SoundCatchUp(now.i)

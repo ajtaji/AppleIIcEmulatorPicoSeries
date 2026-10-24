@@ -104,19 +104,59 @@ Procedure Core1Main()
 EndProcedure
 
 ; ---------------------------------------------------------------- the disk image (flash)
+; The disk is in this program's flash image, packed a track at a time (tools/lzpack.py: a 35-entry
+; table of offset and length, then each track LZ-packed). The head's track is unpacked into SRAM when
+; it is first read. The image is not written: a written sector is counted (DiskWriteErrors) and
+; dropped - DOS reports the write as done, and the change is gone when the head leaves the track.
 
-Global A2DiskBase.i
+Global A2DiskBase.i, A2DiskTrackBytes.i, A2TrackBufNo.i = -1
+Global Dim A2TrackBuf.a(6656)
+
+Procedure DiskUnpack(src.i, n.i, dst.i)
+  Protected p.i, o.i, t.i, ll.i, b.i, off.i, ml.i
+  p = src : o = 0
+  Repeat
+    t = PeekA(p) : p = p + 1
+    ll = t >> 4
+    If ll = 15
+      Repeat
+        b = PeekA(p) : p = p + 1 : ll = ll + b
+      Until b <> 255
+    EndIf
+    While ll > 0
+      PokeA(dst + o, PeekA(p)) : o = o + 1 : p = p + 1 : ll = ll - 1
+    Wend
+    If o >= n : Break : EndIf
+    off = PeekA(p) | (PeekA(p + 1) << 8) : p = p + 2
+    ml = (t & 15) + 3
+    If (t & 15) = 15
+      Repeat
+        b = PeekA(p) : p = p + 1 : ml = ml + b
+      Until b <> 255
+    EndIf
+    While ml > 0
+      PokeA(dst + o, PeekA(dst + o - off)) : o = o + 1 : ml = ml - 1
+    Wend
+  ForEver
+EndProcedure
+
+Procedure A2DiskTrackReady(track.i)
+  If track <> A2TrackBufNo
+    DiskUnpack(A2DiskBase + PeekL(A2DiskBase + track * 8), A2DiskTrackBytes, @A2TrackBuf(0))
+    A2TrackBufNo = track
+  EndIf
+EndProcedure
 
 Procedure.i DiskHostSector(drive.i, track.i, sector.i)
   If drive <> 1 Or A2DiskBase = 0 Or track < 0 Or track >= 35 : ProcedureReturn 0 : EndIf
-  ProcedureReturn A2DiskBase + (track * 16 + sector) * 256
+  A2DiskTrackReady(track)
+  ProcedureReturn @A2TrackBuf(sector * 256)
 EndProcedure
 Procedure.i DiskHostTrack(drive.i, track.i)
   If drive <> 1 Or A2DiskBase = 0 Or track < 0 Or track >= 35 : ProcedureReturn 0 : EndIf
-  ProcedureReturn A2DiskBase + track * #DISK_TRACK_BYTES
+  A2DiskTrackReady(track)
+  ProcedureReturn @A2TrackBuf(0)
 EndProcedure
-; The disk is in this program's flash image and is not written: a written sector is counted and
-; dropped (DOS reports the write as done; the change is gone at the next power on).
 Procedure.i DiskHostWrite(drive.i, track.i, sector.i, src.i)
   ProcedureReturn 0
 EndProcedure
@@ -298,6 +338,7 @@ Procedure A2Boot()
   CompilerEndIf
   CompilerIf #A2_DISK = 1
     A2DiskBase = ?A2DiskData : DiskKind(1) = #A2_DISK_KIND : DiskProtect(1) = 0
+    If #A2_DISK_KIND = 3 : A2DiskTrackBytes = 6656 : Else : A2DiskTrackBytes = 4096 : EndIf
     Say("Disk: drive 1 holds the private build's disk, kind ") : Num(#A2_DISK_KIND) : Eol()
   CompilerElse
     Say("Disk: none") : Eol()

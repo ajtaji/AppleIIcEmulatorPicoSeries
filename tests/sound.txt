@@ -1,0 +1,13 @@
+# The private build with the test ROM: the speaker path to the Bluetooth speaker. Each B is 200 clicks
+# (a tenth of a second at about 1 kHz); the status line must show packets going out and the clicks.
+wait 2
+expect 30 Sound: (playing|Bluetooth error)
+screen 10 SOFT SWITCH TESTS: ALL PASS
+type B
+wait 1
+type B
+wait 1
+type B
+wait 2
+cmd s
+expect 5 bt_packets=[1-9]

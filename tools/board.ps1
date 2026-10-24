@@ -1,50 +1,74 @@
-# Build a board program, take the COM7 lease (C:\PMFBuild\board-leases\lease.ps1), upload it with
-# PureMetalForge's own uploader, capture its USB serial output for -Seconds, give the lease back.
-# Run it from Bash (powershell.exe -File tools/board.ps1 ...): a lease the PowerShell tool's sandbox
-# makes or removes is not seen by the other sessions (side-session notes, 2026-10-23).
-#   tools/board.ps1 -Source rp2040/Diagnostics/cpu_verify.picow -Output build/cpu_verify.uf2 -Seconds 40
+# Build board programs, take the COM7 lease (C:\PMFBuild\board-leases\lease.ps1) once, upload each with
+# PureMetalForge's own uploader, capture its USB serial output, optionally run a tools/board.py script
+# against it, give the lease back. Run it from Bash (powershell.exe -File tools/board.ps1 ...): a lease
+# the PowerShell tool's sandbox makes or removes is not seen by the other sessions (side-session notes,
+# 2026-10-23).
+#   one job:   tools/board.ps1 -Source rp2040/Diagnostics/cpu_verify.picow -Output build/cpu_verify.uf2 -Seconds 80
+#   several:   tools/board.ps1 -Jobs "src|out|seconds|script|scriptSeconds;src|out|..."  (script may be empty)
 param(
-  [Parameter(Mandatory)][string]$Source,
-  [Parameter(Mandatory)][string]$Output,
+  [string]$Source = '',
+  [string]$Output = '',
   [int]$Seconds = 30,
   [string]$Port = 'COM7',
   [string]$Compiler = 'C:\Users\ajtaj\Desktop\Github\PureBasicCode\OpenGl Work\ArduinoBasic\PureMetalForge.exe',
   [int]$LeaseMinutes = 5,
   [string]$Script = '',          # a tools/board.py script run against the board after the upload
-  [int]$ScriptSeconds = 60
+  [int]$ScriptSeconds = 60,
+  [string]$Jobs = '',
+  [switch]$CompileOnly           # build and check the image's end, no board
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$src = [IO.Path]::GetFullPath((Join-Path $root $Source))
-$out = [IO.Path]::GetFullPath((Join-Path $root $Output))
-[IO.Directory]::CreateDirectory((Split-Path $out -Parent)) | Out-Null
-$log = "$out.board.log"
 # PureMetalForge.exe is a windowed program: Start-Process -Wait is what waits for it and gives its exit code
 function Invoke-Pmf([string]$arguments, [string]$stdout) {
   $p = Start-Process -FilePath $Compiler -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru `
        -RedirectStandardOutput $stdout -RedirectStandardError "$stdout.err"
   return $p.ExitCode
 }
-# compile first, without the board, so a compile error never holds the lease
-$rc = Invoke-Pmf ('--compile "' + $src + '" -S -o "' + $out + '"') "$out.build.log"
-if ($rc -ne 0) { Get-Content "$out.build.log" | Select-Object -Last 20; throw "compile failed: $out.build.log" }
-# the image must end below flash $40000: Ms. Pac-Man's pack is at $40000, the NES store at $50000
-$uf2 = [IO.File]::ReadAllBytes($out); $end = 0
-for ($o = 0; $o -lt $uf2.Length; $o += 512) {
-  $e = [BitConverter]::ToUInt32($uf2, $o + 12) + [BitConverter]::ToUInt32($uf2, $o + 16)
-  if ($e -gt $end) { $end = $e }
+$list = @()
+if ($Jobs) {
+  foreach ($j in $Jobs.Split(';')) {
+    $f = $j.Split('|')
+    $list += [pscustomobject]@{ Source = $f[0]; Output = $f[1]; Seconds = [int]$f[2]; Script = $f[3]; ScriptSeconds = [int]$f[4] }
+  }
+} else {
+  $list += [pscustomobject]@{ Source = $Source; Output = $Output; Seconds = $Seconds; Script = $Script; ScriptSeconds = $ScriptSeconds }
 }
-if ($end -gt 0x10040000) { throw ('image ends at 0x{0:X8}, past 0x10040000 (other programs keep data there): not uploaded' -f $end) }
+# compile everything first, without the board, so a compile error never holds the lease
+foreach ($job in $list) {
+  $job | Add-Member src ([IO.Path]::GetFullPath((Join-Path $root $job.Source)))
+  $job | Add-Member out ([IO.Path]::GetFullPath((Join-Path $root $job.Output)))
+  [IO.Directory]::CreateDirectory((Split-Path $job.out -Parent)) | Out-Null
+  $rc = Invoke-Pmf ('--compile "' + $job.src + '" -S -o "' + $job.out + '"') "$($job.out).build.log"
+  if ($rc -ne 0) { Get-Content "$($job.out).build.log" | Select-Object -Last 20; throw "compile failed: $($job.out).build.log" }
+  # the image must end below flash $40000: Ms. Pac-Man's pack is at $40000, the NES store at $50000
+  $uf2 = [IO.File]::ReadAllBytes($job.out); $end = 0
+  for ($o = 0; $o -lt $uf2.Length; $o += 512) {
+    $e = [BitConverter]::ToUInt32($uf2, $o + 12) + [BitConverter]::ToUInt32($uf2, $o + 16)
+    if ($e -gt $end) { $end = $e }
+  }
+  if ($end -gt 0x10040000) { throw ('{0}: image ends at 0x{1:X8}, past 0x10040000 (other programs keep data there): not uploaded' -f $job.Source, $end) }
+  Write-Output ("{0}: image ends at 0x{1:X8}" -f $job.Source, $end)
+  Get-Content "$($job.out).build.log" | Select-String 'SRAM left|ROM_TOTAL|rror' | ForEach-Object { $_.Line }
+}
+if ($CompileOnly) { exit 0 }
 . C:\PMFBuild\board-leases\lease.ps1
-$l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes $LeaseMinutes
+$minutes = [Math]::Max($LeaseMinutes, ($list | ForEach-Object { $_.Seconds + $_.ScriptSeconds + 40 } | Measure-Object -Sum).Sum / 60)
+$l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes))
+$worst = 0
 try {
-  $rc = Invoke-Pmf ('--compile "' + $src + '" -S -o "' + $out + '" --port ' + $Port + ' --seconds ' + $Seconds) $log
-  Get-Content $log | Where-Object { $_ -notmatch '^\[DEBUG\]|^> |TELEMETRY|_RP20|_RP23|^pmfc:' }
-  if ($rc -eq 0 -and $Script) {
-    $sp = [IO.Path]::GetFullPath((Join-Path $root $Script))
-    Push-Location $root
-    try { & py -3 tools/board.py --port $Port --seconds $ScriptSeconds --script $sp --output "$out.script.log"; $rc = $LASTEXITCODE }
-    finally { Pop-Location }
+  foreach ($job in $list) {
+    Write-Output "==== $($job.Source) ($(Get-Date -Format HH:mm:ss))"
+    $log = "$($job.out).board.log"
+    $rc = Invoke-Pmf ('--compile "' + $job.src + '" -S -o "' + $job.out + '" --port ' + $Port + ' --seconds ' + $job.Seconds) $log
+    Get-Content $log | Where-Object { $_ -notmatch '^\[DEBUG\]|^> |TELEMETRY|_RP20|_RP23|^pmfc:' }
+    if ($rc -eq 0 -and $job.Script) {
+      $sp = [IO.Path]::GetFullPath((Join-Path $root $job.Script))
+      Push-Location $root
+      try { & py -3 tools/board.py --port $Port --seconds $job.ScriptSeconds --script $sp --output "$($job.out).script.log"; $rc = $LASTEXITCODE }
+      finally { Pop-Location }
+    }
+    if ($rc -ne 0) { $worst = $rc; Write-Output "==== $($job.Source): exit $rc" }
   }
 } finally { Release-BoardLease $l }
-exit $rc
+exit $worst
