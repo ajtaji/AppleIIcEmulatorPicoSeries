@@ -1,0 +1,11 @@
+# Private build without sound: the IIc with Ron's ROM boots Tubers of Fate and stays on the panel for
+# ten minutes (status every 5 s in the log), then a speed reading.
+wait 1
+screen 40 Start anew or read
+cmd s
+wait 600
+cmd s
+cmd f
+wait 6
+cmd s
+cmd f

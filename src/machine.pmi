@@ -57,6 +57,7 @@ Global VMono.i, VFlash.i                 ; the video's monochrome switch; the fl
 
 Declare A2SpeakerClick()
 Declare.i DiskIo(addr.i, value.i, isWrite.i)
+Declare DiskReset()
 
 ; ---------------------------------------------------------------- the memory map
 
@@ -169,6 +170,7 @@ Procedure A2Reset()
   A2LcRead = 0 : A2LcWrite = 1 : A2LcBank2 = 1 : A2LcPrewrite = 0
   A2VblEnable = 0 : A2VblFlag = 0 : CpuIrqLine = 0
   A2MapAll()
+  DiskReset()
 EndProcedure
 
 ; ---------------------------------------------------------------- the keyboard

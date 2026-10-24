@@ -195,6 +195,13 @@ Procedure DiskFlushTrack()
   Next
 EndProcedure
 
+; The RESET line resets the IWM too: the motor off (the drive enable drops at once), Q6 and Q7 low,
+; the mode register 0, drive 1. The IIc's firmware waits for the enable to drop after a Ctrl+Reset.
+Procedure DiskReset()
+  DiskFlushTrack()
+  DiskMotor = 0 : DiskQ6 = 0 : DiskQ7 = 0 : DiskMode = 0 : DiskDrive = 1 : DiskPhases = 0
+EndProcedure
+
 ; Make DiskNib the track under the selected drive's head.
 Procedure DiskSeekBuffer()
   Protected track.i
