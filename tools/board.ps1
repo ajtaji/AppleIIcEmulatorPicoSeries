@@ -1,18 +1,19 @@
-# Build board programs, then take the board's lease (C:\PMFBuild\board-leases\lease.ps1) for the board
-# step alone: upload each built image as it is with PureMetalForge's own uploader (--radio-firmware: no
-# compile inside the lease), read its USB serial output or run a tools/board.py script against it, give
-# the lease back in a finally (BOARDS.md, Ron 2026-10-25: a lease holds a board only while it is used).
-# Every read has a hard end: Seconds (no script) or ScriptSeconds (the script's deadline). Run it from
-# Bash (powershell.exe -File tools/board.ps1 ...): a lease the PowerShell tool's sandbox makes or removes
-# is not seen by the other sessions (side-session notes, 2026-10-23).
+# Build board programs with PureMetalForge, then upload each built image as it is with PureMetalForge's own
+# uploader (--radio-firmware: nothing is compiled during the board step) and read its USB serial output or
+# run a tools/board.py script against it. Every read has a hard end: Seconds (no script) or ScriptSeconds
+# (the script's deadline).
 #   one job:   tools/board.ps1 -Source rp2040/Diagnostics/cpu_verify.picow -Output build/cpu_verify.uf2 -Seconds 80
 #   several:   tools/board.ps1 -Jobs "src|out|seconds|script|scriptSeconds;src|out|..."  (script may be empty)
+# The compiler: -Compiler, else $env:PUREMETALFORGE, else tools/board.local.ps1 (not in git: one line,
+# $LocalCompiler = '<path>'), else PureMetalForge.exe on the PATH.
+# On a bench whose boards are shared through C:\PMFBuild\board-leases\lease.ps1, the board step holds the
+# board's lease and gives it back in a finally; elsewhere there is no lease.
 param(
   [string]$Source = '',
   [string]$Output = '',
   [int]$Seconds = 30,
   [string]$Port = 'COM7',
-  [string]$Compiler = 'C:\Users\ajtaj\Desktop\Github\PureBasicCode\OpenGl Work\ArduinoBasic\PureMetalForge.exe',
+  [string]$Compiler = '',
   [string]$Script = '',          # a tools/board.py script run against the board after the upload
   [int]$ScriptSeconds = 60,
   [string]$Jobs = '',
@@ -21,6 +22,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+if (-not $Compiler) { $Compiler = $env:PUREMETALFORGE }
+if (-not $Compiler -and (Test-Path "$PSScriptRoot\board.local.ps1")) { . "$PSScriptRoot\board.local.ps1"; $Compiler = $LocalCompiler }
+if (-not $Compiler) { $Compiler = 'PureMetalForge.exe' }
 # PureMetalForge.exe is a windowed program: Start-Process -Wait is what waits for it and gives its exit code
 function Invoke-Pmf([string]$arguments, [string]$stdout) {
   $p = Start-Process -FilePath $Compiler -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru `
@@ -54,15 +58,20 @@ foreach ($job in $list) {
   Get-Content "$($job.out).build.log" | Select-String 'SRAM left|ROM_TOTAL|rror' | ForEach-Object { $_.Line }
 }
 if ($CompileOnly) { exit 0 }
-. C:\PMFBuild\board-leases\lease.ps1
-# the lease's length: each job's upload (about 30 s) and its read, plus a minute
-$minutes = 1 + ($list | ForEach-Object { 30 + $(if ($_.Script) { $_.ScriptSeconds } else { $_.Seconds }) } | Measure-Object -Sum).Sum / 60
-$l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes))
+$leases = 'C:\PMFBuild\board-leases\lease.ps1'
+$shared = Test-Path $leases
+$l = $null
 $speakerLease = $null
+if ($shared) {
+  . $leases
+  # the lease's length: each job's upload (about 30 s) and its read, plus a minute
+  $minutes = 1 + ($list | ForEach-Object { 30 + $(if ($_.Script) { $_.ScriptSeconds } else { $_.Seconds }) } | Measure-Object -Sum).Sum / 60
+  $l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes))
+}
 $worst = 0
 try {
   # the Bluetooth speaker pairs with one board at a time: it has its own lease
-  if ($Speaker) { $speakerLease = Get-BoardLease -Port SPEAKER -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes)) }
+  if ($Speaker -and $shared) { $speakerLease = Get-BoardLease -Port SPEAKER -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes)) }
   foreach ($job in $list) {
     Write-Output "==== $($job.Source) ($(Get-Date -Format HH:mm:ss))"
     $log = "$($job.out).board.log"
@@ -84,7 +93,7 @@ try {
   }
 } finally {
   if ($speakerLease) { Release-BoardLease $speakerLease }
-  Release-BoardLease $l
+  if ($l) { Release-BoardLease $l }
   # a lease of ours must never outlive this script (one SPEAKER lease did on 2026-10-24, reason unknown)
   foreach ($held in @($speakerLease, $l)) {
     if ($held -and [IO.File]::Exists($held.Path)) {

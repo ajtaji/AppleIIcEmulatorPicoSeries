@@ -1,0 +1,2 @@
+94fb34c9c4702584c24fd51f170d6a50d60585dcf8c089565ff2865a5ca14a6e  apple2c-pico-w.uf2
+c7cbd27ca46e0a507dd21f6c589a3fbf6e5d593f3cb6de2b2c10cfb2cc31044b  apple2c-pico2-w.uf2

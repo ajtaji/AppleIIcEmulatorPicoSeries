@@ -2,7 +2,7 @@
 
   SingleStepTests/65x02, rockwell65c02/v1 (MIT): the first 128 KB of each opcode's file (whole tests
       in that part, about 340 per opcode), pinned to commit SINGLESTEP, into --out (default
-      C:/PMFBuild/apple2c-downloads/ss);
+      build/ss);
   Klaus2m5/6502_65C02_functional_tests (GPLv3): the 65C02 extended opcodes test and the 6502
       functional test, as assembled in the repository's bin_files, pinned to commit KLAUS, into
       Diagnostics/ with the 65C02 test's source and the licence in Diagnostics/upstream/.
@@ -28,7 +28,7 @@ def get(url, first=None):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--out', default='C:/PMFBuild/apple2c-downloads/ss')
+    p.add_argument('--out', default=str(ROOT / 'build' / 'ss'))
     a = p.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

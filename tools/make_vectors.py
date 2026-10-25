@@ -1,7 +1,7 @@
 """Single-instruction vectors from SingleStepTests' rockwell65c02 set (MIT), for both checks.
 
 Input: the first 128 KB of each opcode's JSON file (tools/fetch_tests.py puts them in
-C:/PMFBuild/apple2c-downloads/ss; only whole tests in that part are used).
+build/ss; only whole tests in that part are used).
 Output: Diagnostics/vectors_full.bin, every test read (the desktop check). The board's share is
 written by tools/embed_tests.py.
 Record: initial pc(2) a x y s p, final pc(2) a x y s p cycles, n, then n x (addr(2), before, after).
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from ss_load import load
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else 'C:/PMFBuild/apple2c-downloads/ss'
+SRC = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / 'build' / 'ss')
 def record(t):
     i, f = t['initial'], t['final']
     b = struct.pack('<H5B', *[i[k] for k in ('pc', 'a', 'x', 'y', 's', 'p')])

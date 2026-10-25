@@ -27,3 +27,20 @@ demo/*.bin
 demo/*#*
 demo/*.txt
 demo/build.*
+
+# Klaus Dormann's 6502/65C02 functional tests are GPL, not ours to publish: tools/fetch_tests.py fetches
+# them, tools/embed_tests.py builds Diagnostics/test_data.pmi (the board's CPU check) from them
+Diagnostics/6502_functional_test.bin
+Diagnostics/65C02_extended_opcodes_test.bin
+Diagnostics/upstream/65C02_extended_opcodes_test.a65c
+Diagnostics/upstream/klaus-LICENSE.txt
+Diagnostics/test_data.pmi
+
+# publishing metadata for the repository page (not part of the project)
+PUBLISH-META.txt
+
+# this PC's compiler path for tools/board.ps1
+tools/board.local.ps1
+
+# published: the ROM-free firmware images
+!firmware/*.uf2

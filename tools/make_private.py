@@ -1,6 +1,7 @@
 """Build the private firmware wrappers (private/ is ignored by git; nothing here is ever committed):
 
     py -3 tools/make_private.py [--rom <your Apple IIc ROM>] [--disk <.dsk/.do/.po/.nib>] [--no-sound]
+                                [--speaker-from <a wrapper naming your speaker>]
 
 Without --rom the firmware runs this project's test ROM (its B key beeps: a test of the speaker path).
 
@@ -9,8 +10,10 @@ Writes:
   private/disk_data.pmi     the disk for drive 1 (A2DiskData, #A2_DISK_KIND: 1 DOS order, 2 ProDOS, 3 nibbles)
   private/apple2c.picow     the Pico W firmware with them, and sound on the Bluetooth speaker
   private/apple2c.pico2w    the same for the Pico 2 W
-The speaker's address is copied from the NES emulator's private wrapper (the same speaker), byte for
-byte, without being printed. The ROM and the disk go into the firmware image, in flash.
+Sound needs your Bluetooth speaker's address: a PureMetal wrapper with a `PackBluetoothPeer:` label and
+the address on the `Data.a` line under it (6 bytes, least significant first), by default
+private/speaker-source.picow. It is copied byte for byte, without being printed. The ROM and the disk go
+into the firmware image, in flash.
 """
 import argparse
 import re
@@ -20,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from lzpack import pack_image
-NES_PRIVATE = ROOT / 'private' / 'speaker-source.picow'
+SPEAKER_SOURCE = ROOT / 'private' / 'speaker-source.picow'
 
 def data_lines(label, blob):
     out = [label + ':']
@@ -33,6 +36,7 @@ def main():
     p.add_argument('--rom')
     p.add_argument('--disk')
     p.add_argument('--no-sound', action='store_true')
+    p.add_argument('--speaker-from', type=Path, default=SPEAKER_SOURCE)
     a = p.parse_args()
     priv = ROOT / 'private'
     priv.mkdir(exist_ok=True)
@@ -66,9 +70,11 @@ def main():
              'DataSection'] + data_lines('A2DiskData', packed) + ['EndDataSection']) + '\n')
     speaker = None
     if not a.no_sound:
-        m = re.search(r'PackBluetoothPeer:\s*\n\s*(Data\.a [^\n]+)', NES_PRIVATE.read_text())
+        if not a.speaker_from.exists():
+            sys.exit(f'{a.speaker_from}: no such file - name the wrapper with your speaker with --speaker-from, or use --no-sound')
+        m = re.search(r'PackBluetoothPeer:\s*\n\s*(Data\.a [^\n]+)', a.speaker_from.read_text())
         if not m:
-            sys.exit('no speaker address found in the NES private wrapper; use --no-sound')
+            sys.exit(f'no speaker address (PackBluetoothPeer:) in {a.speaker_from}; use --no-sound')
         speaker = m.group(1)
     for chip, body, ext in (('Pico W', '../rp2040/apple2c_body.pico', 'picow'),
                             ('Pico 2 W', '../rp2350/apple2c_body.pico2', 'pico2w')):

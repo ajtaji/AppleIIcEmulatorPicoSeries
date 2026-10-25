@@ -3,8 +3,8 @@
 ;
 ; Build (PowerShell, from the repository root):
 ;   & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\apple2c_desktop.pb /EXE desktop\PureMetalAppleIIc.exe /THREAD /DPIAWARE /OPTIMIZER
-;   (the engine is found at C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/ unless
-;    /CONSTANT GL_ENGINE_DIR$=<path>/ says otherwise; the trailing slash matters)
+;   (the engine, github.com/ajtaji/Neon-Arcade-Dispay-Engine, is found cloned beside this repository
+;    unless /CONSTANT GL_ENGINE_DIR$=<path>/ says otherwise; the trailing slash matters)
 ; Run:  desktop\PureMetalAppleIIc.exe [--rom file] [--disk1 file] [--disk2 file] [--mono] [--mute]
 ;          [--tab N] [--type TEXT] [--shot window.png --seconds S]
 ;
@@ -14,7 +14,7 @@
 EnableExplicit
 
 CompilerIf Not Defined(GL_ENGINE_DIR$, #PB_Constant)
-  #GL_ENGINE_DIR$ = "C:/Users/ajtaj/Desktop/Neon-Arcade-Dispay-Engine/"
+  #GL_ENGINE_DIR$ = #PB_Compiler_FilePath + "../../Neon-Arcade-Dispay-Engine/"   ; cloned beside this repository
 CompilerEndIf
 XIncludeFile #GL_ENGINE_DIR$ + "GlTypes.pbi"
 XIncludeFile #GL_ENGINE_DIR$ + "GlUtilities.pbi"
