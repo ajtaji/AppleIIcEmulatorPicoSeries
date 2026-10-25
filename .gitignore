@@ -42,5 +42,6 @@ PUBLISH-META.txt
 # this PC's compiler path for tools/board.ps1
 tools/board.local.ps1
 
-# published: the ROM-free firmware images
+# published: the ROM-free firmware images and the PureMetal demo's disk (built by PureMetalForge)
 !firmware/*.uf2
+!demo/apple2c_demo.dsk
