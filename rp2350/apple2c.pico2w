@@ -2,6 +2,7 @@
 ; panel, the keyboard over USB serial. The public firmware holds no Apple code: it runs this project's
 ; test ROM and has no disk and no sound. private/apple2c.picow (ignored by git) is the full machine.
 #CPU_ASM_TAIL = 1
+#CPU_TAIL_T2 = 1                         ; the Thumb-2 tail on the Cortex-M33
 #A2_ROM = 0
 #A2_DISK = 0
 #A2_AUDIO = 0

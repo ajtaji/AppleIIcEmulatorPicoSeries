@@ -47,7 +47,10 @@ look, not the IIc's RGB adapter.
 
 ## The Pico builds
 
-Pico W, 200 MHz; the CPU core and its dispatch run from SRAM. Guest RAM is 128 KB in sixteen 8 KB
+Pico W, 200 MHz; the CPU core and its dispatch run from SRAM. On the Pico 2 series (`#CPU_TAIL_T2 = 1`)
+each handler ends in a Thumb-2 tail: the cycle count and the next opcode's dispatch in ten instructions
+(`subs.w`/`ble.w`, the page table read with a scaled index, `ldrb.w` with a register offset, `uxth`, and
+`ldr.w pc` straight from the dispatch table) where the Pico W's Thumb-1 tail takes nineteen. Guest RAM is 128 KB in sixteen 8 KB
 blocks. Core 0 runs the machine paced to the real IIc (59.92 frames a second, 17030 cycles each);
 core 1 draws the panel, a line only when what it shows changed, and keeps the Bluetooth radio going.
 
@@ -95,7 +98,8 @@ click a line to break there, the stack), Switches, Memory (as the CPU sees it, m
 | Pico W, whole machine paced (test ROM) | 59.92 frames/s, 1020 kHz, core 0 22% busy |
 | Pico W, whole machine unthrottled (monitor `f`, the test disk being read) | 5.36 MHz = 5.2x a IIc |
 | Pico W with the IIc ROM 4, Tubers of Fate waiting for a key: paced / unthrottled | 1020 kHz, core 0 13% busy / 7.77 MHz = 7.6x a IIc |
-| Pico 2 W (150 MHz), 65C02 core alone / whole machine unthrottled | 6.0-6.5 MHz / 5.16 MHz |
+| Pico 2 W (150 MHz), 65C02 core alone / whole machine unthrottled, Thumb-1 tail | 5.96-6.53 MHz / 5.17 MHz |
+| Pico 2 W, the Thumb-2 tail (2026-10-25, compiler 9777f6cd6; same tests, all pass) | 6.68-7.46 MHz (+12-14%) / 5.70 MHz (+10%) |
 | Desktop, 65C02 core alone (6502 functional test, 30,646,176 instructions) | 175 M instructions/s (C computed goto), 172 M through a procedure table |
 | Desktop, whole machine paced | 60.0 frames/s, 1.02 MHz |
 

@@ -1,5 +1,6 @@
 ; The 65C02 core's check on the Pico W (RP2040, 200 MHz): Diagnostics/cpu_verify_body.pmi.
 #CPU_ASM_TAIL = 1
+#CPU_TAIL_T2 = 0                         ; the Pico W is Thumb-1
 #DIAG_CLOCK_KHZ = 200000
 #DIAG_BOARD$ = "Pico W"
 EnableExplicit

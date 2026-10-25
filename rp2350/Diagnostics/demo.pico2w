@@ -2,6 +2,7 @@
 ; board into a disk that boots) in drive 1 of the public machine on the Pico 2 W; key D boots it.
 ; tools/pack_disk.py demo/apple2c_demo.dsk build/demo_disk.pmi writes the disk's data.
 #CPU_ASM_TAIL = 1
+#CPU_TAIL_T2 = 1                         ; the Thumb-2 tail on the Cortex-M33
 #A2_ROM = 0
 #A2_DISK = 1
 #A2_AUDIO = 0

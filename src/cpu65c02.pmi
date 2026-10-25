@@ -5,7 +5,8 @@
 ; stack through CpuZp (host address of page 0; page 1 follows). CpuRun's budget is CYCLES; it
 ; returns the cycles used (whole instructions, so a few more than asked).
 
-; #CPU_ASM_TAIL: 1 = the Thumb dispatch tail (Pico W), 0 = PureMetal computed Goto.
+; #CPU_TAIL_T2: 1 = the Thumb-2 tail (Pico 2 series); else #CPU_ASM_TAIL: 1 = the Thumb-1 tail
+; (Pico W), 0 = PureMetal computed Goto. Define both before including this file.
 EnableExplicit
 Declare.i CpuBusRead(addr.i)
 Declare CpuBusWrite(addr.i, value.i)
@@ -170,7 +171,20 @@ EndProcedure
 
 ProcedureRAM.i CpuRun(n.i)
 Macro DispatchNext()
-  CompilerIf #CPU_ASM_TAIL = 1
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuPC
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElseIf #CPU_ASM_TAIL = 1
     ASM Uses CpuPC
       mov r0, r8
       lsrs r1, r0, #8
@@ -479,7 +493,24 @@ Op00: ; $00 BRK imp
   RdB(CpuTmp, $FFFE)
   RdB(CpuVal, $FFFF)
   CpuPC = CpuTmp | (CpuVal << 8)
-  NextOp(7)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #7
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(7)
+  CompilerEndIf
 Op01: ; $01 ORA inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -489,19 +520,87 @@ Op01: ; $01 ORA inx
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op02: ; $02 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op03: ; $03 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op04: ; $04 TSB zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   CpuFZ = CpuA & CpuVal
   PokeA(CpuZp + CpuEa, (CpuVal | CpuA))
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op05: ; $05 ORA zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -509,7 +608,24 @@ Op05: ; $05 ORA zp
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op06: ; $06 ASL zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -520,24 +636,92 @@ Op06: ; $06 ASL zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op07: ; $07 RMB0 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $FE)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op08: ; $08 PHP imp
   CpuTmp = CpuStatus() | $10
   CpuPush(CpuTmp)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op09: ; $09 ORA imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op0A: ; $0A ASL acc
   CpuVal = CpuA
   CpuRes = CpuVal << 1
@@ -546,9 +730,43 @@ Op0A: ; $0A ASL acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op0B: ; $0B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op0C: ; $0C TSB abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -557,7 +775,24 @@ Op0C: ; $0C TSB abs
   RdB(CpuVal, CpuEa)
   CpuFZ = CpuA & CpuVal
   WrB(CpuEa, (CpuVal | CpuA))
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op0D: ; $0D ORA abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -567,7 +802,24 @@ Op0D: ; $0D ORA abs
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op0E: ; $0E ASL abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -580,7 +832,24 @@ Op0E: ; $0E ASL abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op0F: ; $0F BBR0 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -597,7 +866,24 @@ Op0F: ; $0F BBR0 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op10: ; $10 BPL rel
   RdSB(CpuRes, CpuPC)
   If (CpuFN & $80) = 0
@@ -611,7 +897,24 @@ Op10: ; $10 BPL rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op11: ; $11 ORA iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -624,7 +927,24 @@ Op11: ; $11 ORA iny
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op12: ; $12 ORA izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -633,16 +953,67 @@ Op12: ; $12 ORA izp
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op13: ; $13 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op14: ; $14 TRB zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   CpuFZ = CpuA & CpuVal
   PokeA(CpuZp + CpuEa, (CpuVal & (~CpuA) & 255))
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op15: ; $15 ORA zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -651,7 +1022,24 @@ Op15: ; $15 ORA zpx
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op16: ; $16 ASL zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -663,16 +1051,67 @@ Op16: ; $16 ASL zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op17: ; $17 RMB1 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $FD)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op18: ; $18 CLC imp
   CpuFC = 0
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op19: ; $19 ORA aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -686,7 +1125,24 @@ Op19: ; $19 ORA aby
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op1A: ; $1A INC acc
   CpuVal = CpuA
   CpuRes = CpuVal + 1
@@ -694,9 +1150,43 @@ Op1A: ; $1A INC acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op1B: ; $1B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op1C: ; $1C TRB abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -705,7 +1195,24 @@ Op1C: ; $1C TRB abs
   RdB(CpuVal, CpuEa)
   CpuFZ = CpuA & CpuVal
   WrB(CpuEa, (CpuVal & (~CpuA) & 255))
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op1D: ; $1D ORA abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -719,7 +1226,24 @@ Op1D: ; $1D ORA abx
   CpuA = CpuA | CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op1E: ; $1E ASL abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -736,7 +1260,24 @@ Op1E: ; $1E ASL abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op1F: ; $1F BBR1 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -753,7 +1294,24 @@ Op1F: ; $1F BBR1 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op20: ; $20 JSR abs
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -761,7 +1319,24 @@ Op20: ; $20 JSR abs
   CpuPush(CpuPC & 255)
   RdB(CpuVal, CpuPC)
   CpuPC = CpuTmp | (CpuVal << 8)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op21: ; $21 AND inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -771,12 +1346,63 @@ Op21: ; $21 AND inx
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op22: ; $22 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op23: ; $23 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op24: ; $24 BIT zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -784,7 +1410,24 @@ Op24: ; $24 BIT zp
   CpuFN = CpuVal
   CpuFV = CpuVal << 1
   CpuFZ = CpuA & CpuVal
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op25: ; $25 AND zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -792,7 +1435,24 @@ Op25: ; $25 AND zp
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op26: ; $26 ROL zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -803,24 +1463,92 @@ Op26: ; $26 ROL zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op27: ; $27 RMB2 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $FB)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op28: ; $28 PLP imp
   CpuPop(CpuTmp)
   CpuSetStatus(CpuTmp)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op29: ; $29 AND imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op2A: ; $2A ROL acc
   CpuVal = CpuA
   CpuRes = (CpuVal << 1) | ((CpuFC >> 8) & 1)
@@ -829,9 +1557,43 @@ Op2A: ; $2A ROL acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op2B: ; $2B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op2C: ; $2C BIT abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -841,7 +1603,24 @@ Op2C: ; $2C BIT abs
   CpuFN = CpuVal
   CpuFV = CpuVal << 1
   CpuFZ = CpuA & CpuVal
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op2D: ; $2D AND abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -851,7 +1630,24 @@ Op2D: ; $2D AND abs
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op2E: ; $2E ROL abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -864,7 +1660,24 @@ Op2E: ; $2E ROL abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op2F: ; $2F BBR2 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -881,7 +1694,24 @@ Op2F: ; $2F BBR2 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op30: ; $30 BMI rel
   RdSB(CpuRes, CpuPC)
   If (CpuFN & $80) <> 0
@@ -895,7 +1725,24 @@ Op30: ; $30 BMI rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op31: ; $31 AND iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -908,7 +1755,24 @@ Op31: ; $31 AND iny
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op32: ; $32 AND izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -917,9 +1781,43 @@ Op32: ; $32 AND izp
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op33: ; $33 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op34: ; $34 BIT zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -928,7 +1826,24 @@ Op34: ; $34 BIT zpx
   CpuFN = CpuVal
   CpuFV = CpuVal << 1
   CpuFZ = CpuA & CpuVal
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op35: ; $35 AND zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -937,7 +1852,24 @@ Op35: ; $35 AND zpx
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op36: ; $36 ROL zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -949,16 +1881,67 @@ Op36: ; $36 ROL zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op37: ; $37 RMB3 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $F7)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op38: ; $38 SEC imp
   CpuFC = $100
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op39: ; $39 AND aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -972,7 +1955,24 @@ Op39: ; $39 AND aby
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op3A: ; $3A DEC acc
   CpuVal = CpuA
   CpuRes = CpuVal - 1
@@ -980,9 +1980,43 @@ Op3A: ; $3A DEC acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op3B: ; $3B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op3C: ; $3C BIT abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -996,7 +2030,24 @@ Op3C: ; $3C BIT abx
   CpuFN = CpuVal
   CpuFV = CpuVal << 1
   CpuFZ = CpuA & CpuVal
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op3D: ; $3D AND abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1010,7 +2061,24 @@ Op3D: ; $3D AND abx
   CpuA = CpuA & CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op3E: ; $3E ROL abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1027,7 +2095,24 @@ Op3E: ; $3E ROL abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op3F: ; $3F BBR3 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1044,14 +2129,48 @@ Op3F: ; $3F BBR3 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op40: ; $40 RTI imp
   CpuPop(CpuTmp)
   CpuSetStatus(CpuTmp)
   CpuPop(CpuTmp)
   CpuPop(CpuVal)
   CpuPC = CpuTmp | (CpuVal << 8)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op41: ; $41 EOR inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1061,15 +2180,83 @@ Op41: ; $41 EOR inx
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op42: ; $42 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op43: ; $43 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op44: ; $44 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op45: ; $45 EOR zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1077,7 +2264,24 @@ Op45: ; $45 EOR zp
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op46: ; $46 LSR zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1088,23 +2292,91 @@ Op46: ; $46 LSR zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op47: ; $47 RMB4 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $EF)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op48: ; $48 PHA imp
   CpuPush(CpuA)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op49: ; $49 EOR imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op4A: ; $4A LSR acc
   CpuVal = CpuA
   CpuRes = CpuVal >> 1
@@ -1113,16 +2385,67 @@ Op4A: ; $4A LSR acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op4B: ; $4B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op4C: ; $4C JMP abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
   CpuEa = CpuEa | (CpuTmp << 8)
   CpuPC = (CpuPC + 2) & $FFFF
   CpuPC = CpuEa
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op4D: ; $4D EOR abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1132,7 +2455,24 @@ Op4D: ; $4D EOR abs
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op4E: ; $4E LSR abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1145,7 +2485,24 @@ Op4E: ; $4E LSR abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op4F: ; $4F BBR4 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1162,7 +2519,24 @@ Op4F: ; $4F BBR4 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op50: ; $50 BVC rel
   RdSB(CpuRes, CpuPC)
   If (CpuFV & $80) = 0
@@ -1176,7 +2550,24 @@ Op50: ; $50 BVC rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op51: ; $51 EOR iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1189,7 +2580,24 @@ Op51: ; $51 EOR iny
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op52: ; $52 EOR izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1198,12 +2606,63 @@ Op52: ; $52 EOR izp
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op53: ; $53 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op54: ; $54 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op55: ; $55 EOR zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1212,7 +2671,24 @@ Op55: ; $55 EOR zpx
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op56: ; $56 LSR zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1224,16 +2700,67 @@ Op56: ; $56 LSR zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op57: ; $57 RMB5 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $DF)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op58: ; $58 CLI imp
   CpuFI = 0
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op59: ; $59 EOR aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1247,15 +2774,83 @@ Op59: ; $59 EOR aby
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op5A: ; $5A PHY imp
   CpuPush(CpuY)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op5B: ; $5B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op5C: ; $5C NOP n3
   CpuPC = (CpuPC + 2) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op5D: ; $5D EOR abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1269,7 +2864,24 @@ Op5D: ; $5D EOR abx
   CpuA = CpuA ! CpuVal
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op5E: ; $5E LSR abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1286,7 +2898,24 @@ Op5E: ; $5E LSR abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op5F: ; $5F BBR5 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1303,12 +2932,46 @@ Op5F: ; $5F BBR5 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op60: ; $60 RTS imp
   CpuPop(CpuTmp)
   CpuPop(CpuVal)
   CpuPC = ((CpuTmp | (CpuVal << 8)) + 1) & $FFFF
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op61: ; $61 ADC inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1342,17 +3005,85 @@ Op61: ; $61 ADC inx
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op62: ; $62 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op63: ; $63 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op64: ; $64 STZ zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   PokeA(CpuZp + CpuEa, 0)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op65: ; $65 ADC zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1384,7 +3115,24 @@ Op65: ; $65 ADC zp
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op66: ; $66 ROR zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1395,18 +3143,69 @@ Op66: ; $66 ROR zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op67: ; $67 RMB6 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $BF)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op68: ; $68 PLA imp
   CpuPop(CpuA)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op69: ; $69 ADC imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1437,7 +3236,24 @@ Op69: ; $69 ADC imm
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op6A: ; $6A ROR acc
   CpuVal = CpuA
   CpuRes = (CpuVal >> 1) | ((CpuFC >> 1) & $80)
@@ -1446,9 +3262,43 @@ Op6A: ; $6A ROR acc
   CpuFN = CpuRes
   CpuFZ = CpuRes
   CpuA = CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op6B: ; $6B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op6C: ; $6C JMP ind
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1457,7 +3307,24 @@ Op6C: ; $6C JMP ind
   RdB(CpuTmp, CpuEa)
   RdB(CpuVal, CpuEa + 1)
   CpuPC = CpuTmp | (CpuVal << 8)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op6D: ; $6D ADC abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1491,7 +3358,24 @@ Op6D: ; $6D ADC abs
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op6E: ; $6E ROR abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1504,7 +3388,24 @@ Op6E: ; $6E ROR abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op6F: ; $6F BBR6 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1521,7 +3422,24 @@ Op6F: ; $6F BBR6 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op70: ; $70 BVS rel
   RdSB(CpuRes, CpuPC)
   If (CpuFV & $80) <> 0
@@ -1535,7 +3453,24 @@ Op70: ; $70 BVS rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op71: ; $71 ADC iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1572,7 +3507,24 @@ Op71: ; $71 ADC iny
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op72: ; $72 ADC izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1605,15 +3557,66 @@ Op72: ; $72 ADC izp
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op73: ; $73 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op74: ; $74 STZ zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = (CpuEa + CpuX) & 255
   PokeA(CpuZp + CpuEa, 0)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op75: ; $75 ADC zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1646,7 +3649,24 @@ Op75: ; $75 ADC zpx
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op76: ; $76 ROR zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -1658,16 +3678,67 @@ Op76: ; $76 ROR zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op77: ; $77 RMB7 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal & $7F)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op78: ; $78 SEI imp
   CpuFI = 1
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op79: ; $79 ADC aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1705,14 +3776,65 @@ Op79: ; $79 ADC aby
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op7A: ; $7A PLY imp
   CpuPop(CpuY)
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op7B: ; $7B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op7C: ; $7C JMP iax
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1722,7 +3844,24 @@ Op7C: ; $7C JMP iax
   RdB(CpuTmp, CpuEa)
   RdB(CpuVal, CpuEa + 1)
   CpuPC = CpuTmp | (CpuVal << 8)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op7D: ; $7D ADC abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1760,7 +3899,24 @@ Op7D: ; $7D ADC abx
   EndIf
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op7E: ; $7E ROR abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1777,7 +3933,24 @@ Op7E: ; $7E ROR abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op7F: ; $7F BBR7 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1794,7 +3967,24 @@ Op7F: ; $7F BBR7 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op80: ; $80 BRA rel
   RdSB(CpuRes, CpuPC)
   CpuTmp = (CpuPC + 1) & $FFFF
@@ -1804,78 +3994,333 @@ Op80: ; $80 BRA rel
   Else
     CpuLeft = CpuLeft - 1
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op81: ; $81 STA inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuTmp = (CpuTmp + CpuX) & 255
   CpuEa = PeekA(CpuZp + CpuTmp) | (PeekA(CpuZp + ((CpuTmp + 1) & 255)) << 8)
   WrB(CpuEa, CpuA)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op82: ; $82 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op83: ; $83 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op84: ; $84 STY zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   PokeA(CpuZp + CpuEa, CpuY)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op85: ; $85 STA zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   PokeA(CpuZp + CpuEa, CpuA)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op86: ; $86 STX zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   PokeA(CpuZp + CpuEa, CpuX)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 Op87: ; $87 SMB0 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $01)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op88: ; $88 DEY imp
   CpuY = (CpuY - 1) & 255
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op89: ; $89 BITI imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuFZ = CpuA & CpuVal
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op8A: ; $8A TXA imp
   CpuA = CpuX
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op8B: ; $8B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op8C: ; $8C STY abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
   CpuEa = CpuEa | (CpuTmp << 8)
   CpuPC = (CpuPC + 2) & $FFFF
   WrB(CpuEa, CpuY)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op8D: ; $8D STA abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
   CpuEa = CpuEa | (CpuTmp << 8)
   CpuPC = (CpuPC + 2) & $FFFF
   WrB(CpuEa, CpuA)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op8E: ; $8E STX abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
   CpuEa = CpuEa | (CpuTmp << 8)
   CpuPC = (CpuPC + 2) & $FFFF
   WrB(CpuEa, CpuX)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op8F: ; $8F BBS0 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -1892,7 +4337,24 @@ Op8F: ; $8F BBS0 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op90: ; $90 BCC rel
   RdSB(CpuRes, CpuPC)
   If (CpuFC & $100) = 0
@@ -1906,51 +4368,204 @@ Op90: ; $90 BCC rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op91: ; $91 STA iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = PeekA(CpuZp + CpuTmp) | (PeekA(CpuZp + ((CpuTmp + 1) & 255)) << 8)
   CpuEa = CpuEa + CpuY
   WrB(CpuEa, CpuA)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 Op92: ; $92 STA izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = PeekA(CpuZp + CpuTmp) | (PeekA(CpuZp + ((CpuTmp + 1) & 255)) << 8)
   WrB(CpuEa, CpuA)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op93: ; $93 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op94: ; $94 STY zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = (CpuEa + CpuX) & 255
   PokeA(CpuZp + CpuEa, CpuY)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op95: ; $95 STA zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = (CpuEa + CpuX) & 255
   PokeA(CpuZp + CpuEa, CpuA)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op96: ; $96 STX zpy
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuEa = (CpuEa + CpuY) & 255
   PokeA(CpuZp + CpuEa, CpuX)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op97: ; $97 SMB1 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $02)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op98: ; $98 TYA imp
   CpuA = CpuY
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op99: ; $99 STA aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1958,19 +4573,87 @@ Op99: ; $99 STA aby
   CpuPC = (CpuPC + 2) & $FFFF
   CpuEa = CpuEa + CpuY
   WrB(CpuEa, CpuA)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op9A: ; $9A TXS imp
   CpuS = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 Op9B: ; $9B NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 Op9C: ; $9C STZ abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
   CpuEa = CpuEa | (CpuTmp << 8)
   CpuPC = (CpuPC + 2) & $FFFF
   WrB(CpuEa, 0)
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 Op9D: ; $9D STA abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1978,7 +4661,24 @@ Op9D: ; $9D STA abx
   CpuPC = (CpuPC + 2) & $FFFF
   CpuEa = CpuEa + CpuX
   WrB(CpuEa, CpuA)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op9E: ; $9E STZ abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -1986,7 +4686,24 @@ Op9E: ; $9E STZ abx
   CpuPC = (CpuPC + 2) & $FFFF
   CpuEa = CpuEa + CpuX
   WrB(CpuEa, 0)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Op9F: ; $9F BBS1 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2003,13 +4720,47 @@ Op9F: ; $9F BBS1 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpA0: ; $A0 LDY imm
   RdB(CpuY, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpA1: ; $A1 LDA inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2018,60 +4769,247 @@ OpA1: ; $A1 LDA inx
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpA2: ; $A2 LDX imm
   RdB(CpuX, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpA3: ; $A3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpA4: ; $A4 LDY zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuY = PeekA(CpuZp + CpuEa)
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpA5: ; $A5 LDA zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuA = PeekA(CpuZp + CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpA6: ; $A6 LDX zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuX = PeekA(CpuZp + CpuEa)
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpA7: ; $A7 SMB2 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $04)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpA8: ; $A8 TAY imp
   CpuY = CpuA
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpA9: ; $A9 LDA imm
   RdB(CpuA, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpAA: ; $AA TAX imp
   CpuX = CpuA
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpAB: ; $AB NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpAC: ; $AC LDY abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2080,7 +5018,24 @@ OpAC: ; $AC LDY abs
   RdB(CpuY, CpuEa)
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpAD: ; $AD LDA abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2089,7 +5044,24 @@ OpAD: ; $AD LDA abs
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpAE: ; $AE LDX abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2098,7 +5070,24 @@ OpAE: ; $AE LDX abs
   RdB(CpuX, CpuEa)
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpAF: ; $AF BBS2 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2115,7 +5104,24 @@ OpAF: ; $AF BBS2 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpB0: ; $B0 BCS rel
   RdSB(CpuRes, CpuPC)
   If (CpuFC & $100) <> 0
@@ -2129,7 +5135,24 @@ OpB0: ; $B0 BCS rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpB1: ; $B1 LDA iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2141,7 +5164,24 @@ OpB1: ; $B1 LDA iny
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpB2: ; $B2 LDA izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2149,9 +5189,43 @@ OpB2: ; $B2 LDA izp
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpB3: ; $B3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpB4: ; $B4 LDY zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2159,7 +5233,24 @@ OpB4: ; $B4 LDY zpx
   CpuY = PeekA(CpuZp + CpuEa)
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpB5: ; $B5 LDA zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2167,7 +5258,24 @@ OpB5: ; $B5 LDA zpx
   CpuA = PeekA(CpuZp + CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpB6: ; $B6 LDX zpy
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2175,16 +5283,67 @@ OpB6: ; $B6 LDX zpy
   CpuX = PeekA(CpuZp + CpuEa)
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpB7: ; $B7 SMB3 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $08)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpB8: ; $B8 CLV imp
   CpuFV = 0
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpB9: ; $B9 LDA aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2197,14 +5356,65 @@ OpB9: ; $B9 LDA aby
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpBA: ; $BA TSX imp
   CpuX = CpuS
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpBB: ; $BB NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpBC: ; $BC LDY abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2217,7 +5427,24 @@ OpBC: ; $BC LDY abx
   RdB(CpuY, CpuEa)
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpBD: ; $BD LDA abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2230,7 +5457,24 @@ OpBD: ; $BD LDA abx
   RdB(CpuA, CpuEa)
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpBE: ; $BE LDX aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2243,7 +5487,24 @@ OpBE: ; $BE LDX aby
   RdB(CpuX, CpuEa)
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpBF: ; $BF BBS3 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2260,7 +5521,24 @@ OpBF: ; $BF BBS3 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpC0: ; $C0 CPY imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2268,7 +5546,24 @@ OpC0: ; $C0 CPY imm
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpC1: ; $C1 CMP inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2279,12 +5574,63 @@ OpC1: ; $C1 CMP inx
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpC2: ; $C2 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpC3: ; $C3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpC4: ; $C4 CPY zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2293,7 +5639,24 @@ OpC4: ; $C4 CPY zp
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpC5: ; $C5 CMP zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2302,7 +5665,24 @@ OpC5: ; $C5 CMP zp
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpC6: ; $C6 DEC zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2312,18 +5692,69 @@ OpC6: ; $C6 DEC zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpC7: ; $C7 SMB4 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $10)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpC8: ; $C8 INY imp
   CpuY = (CpuY + 1) & 255
   CpuFN = CpuY
   CpuFZ = CpuY
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpC9: ; $C9 CMP imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2331,14 +5762,65 @@ OpC9: ; $C9 CMP imm
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpCA: ; $CA DEX imp
   CpuX = (CpuX - 1) & 255
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpCB: ; $CB NOP imp
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpCC: ; $CC CPY abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2349,7 +5831,24 @@ OpCC: ; $CC CPY abs
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpCD: ; $CD CMP abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2360,7 +5859,24 @@ OpCD: ; $CD CMP abs
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpCE: ; $CE DEC abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2372,7 +5888,24 @@ OpCE: ; $CE DEC abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpCF: ; $CF BBS4 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2389,7 +5922,24 @@ OpCF: ; $CF BBS4 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpD0: ; $D0 BNE rel
   RdSB(CpuRes, CpuPC)
   If (CpuFZ & 255) <> 0
@@ -2403,7 +5953,24 @@ OpD0: ; $D0 BNE rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpD1: ; $D1 CMP iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2417,7 +5984,24 @@ OpD1: ; $D1 CMP iny
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpD2: ; $D2 CMP izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2427,12 +6011,63 @@ OpD2: ; $D2 CMP izp
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpD3: ; $D3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpD4: ; $D4 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpD5: ; $D5 CMP zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2442,7 +6077,24 @@ OpD5: ; $D5 CMP zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpD6: ; $D6 DEC zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2453,16 +6105,67 @@ OpD6: ; $D6 DEC zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpD7: ; $D7 SMB5 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $20)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpD8: ; $D8 CLD imp
   CpuFD = 0
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpD9: ; $D9 CMP aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2477,16 +6180,84 @@ OpD9: ; $D9 CMP aby
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpDA: ; $DA PHX imp
   CpuPush(CpuX)
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpDB: ; $DB NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpDC: ; $DC NOP n3
   CpuPC = (CpuPC + 2) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpDD: ; $DD CMP abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2501,7 +6272,24 @@ OpDD: ; $DD CMP abx
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpDE: ; $DE DEC abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2514,7 +6302,24 @@ OpDE: ; $DE DEC abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(7)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #7
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(7)
+  CompilerEndIf
 OpDF: ; $DF BBS5 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2531,7 +6336,24 @@ OpDF: ; $DF BBS5 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpE0: ; $E0 CPX imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2539,7 +6361,24 @@ OpE0: ; $E0 CPX imm
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpE1: ; $E1 SBC inx
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2563,12 +6402,63 @@ OpE1: ; $E1 SBC inx
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpE2: ; $E2 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpE3: ; $E3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpE4: ; $E4 CPX zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2577,7 +6467,24 @@ OpE4: ; $E4 CPX zp
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpE5: ; $E5 SBC zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2599,7 +6506,24 @@ OpE5: ; $E5 SBC zp
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(3)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #3
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(3)
+  CompilerEndIf
 OpE6: ; $E6 INC zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2609,18 +6533,69 @@ OpE6: ; $E6 INC zp
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpE7: ; $E7 SMB6 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $40)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpE8: ; $E8 INX imp
   CpuX = (CpuX + 1) & 255
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpE9: ; $E9 SBC imm
   RdB(CpuVal, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2641,11 +6616,62 @@ OpE9: ; $E9 SBC imm
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpEA: ; $EA NOP imp
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpEB: ; $EB NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpEC: ; $EC CPX abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2656,7 +6682,24 @@ OpEC: ; $EC CPX abs
   CpuFN = CpuRes
   CpuFZ = CpuRes & 255
   CpuFC = ~CpuRes
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpED: ; $ED SBC abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2680,7 +6723,24 @@ OpED: ; $ED SBC abs
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpEE: ; $EE INC abs
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2692,7 +6752,24 @@ OpEE: ; $EE INC abs
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpEF: ; $EF BBS6 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2709,7 +6786,24 @@ OpEF: ; $EF BBS6 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpF0: ; $F0 BEQ rel
   RdSB(CpuRes, CpuPC)
   If (CpuFZ & 255) = 0
@@ -2723,7 +6817,24 @@ OpF0: ; $F0 BEQ rel
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpF1: ; $F1 SBC iny
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2750,7 +6861,24 @@ OpF1: ; $F1 SBC iny
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpF2: ; $F2 SBC izp
   RdB(CpuTmp, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2773,12 +6901,63 @@ OpF2: ; $F2 SBC izp
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpF3: ; $F3 NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpF4: ; $F4 NOP n2
   CpuPC = (CpuPC + 1) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpF5: ; $F5 SBC zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2801,7 +6980,24 @@ OpF5: ; $F5 SBC zpx
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpF6: ; $F6 INC zpx
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
@@ -2812,16 +7008,67 @@ OpF6: ; $F6 INC zpx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   PokeA(CpuZp + CpuEa, CpuRes)
-  NextOp(6)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #6
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(6)
+  CompilerEndIf
 OpF7: ; $F7 SMB7 zp
   RdB(CpuEa, CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
   CpuVal = PeekA(CpuZp + CpuEa)
   PokeA(CpuZp + CpuEa, CpuVal | $80)
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 OpF8: ; $F8 SED imp
   CpuFD = 1
-  NextOp(2)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #2
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(2)
+  CompilerEndIf
 OpF9: ; $F9 SBC aby
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2849,17 +7096,85 @@ OpF9: ; $F9 SBC aby
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpFA: ; $FA PLX imp
   CpuPop(CpuX)
   CpuFN = CpuX
   CpuFZ = CpuX
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpFB: ; $FB NOP imp
-  NextOp(1)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #1
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(1)
+  CompilerEndIf
 OpFC: ; $FC NOP n3
   CpuPC = (CpuPC + 2) & $FFFF
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpFD: ; $FD SBC abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2887,7 +7202,24 @@ OpFD: ; $FD SBC abx
   CpuA = CpuRes & 255
   CpuFN = CpuA
   CpuFZ = CpuA
-  NextOp(4)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #4
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(4)
+  CompilerEndIf
 OpFE: ; $FE INC abx
   RdB(CpuEa, CpuPC)
   RdB(CpuTmp, CpuPC + 1)
@@ -2900,7 +7232,24 @@ OpFE: ; $FE INC abx
   CpuFN = CpuRes
   CpuFZ = CpuRes
   WrB(CpuEa, CpuRes)
-  NextOp(7)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #7
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(7)
+  CompilerEndIf
 OpFF: ; $FF BBS7 zpr
   RdB(CpuEa, CpuPC)
   CpuVal = PeekA(CpuZp + CpuEa)
@@ -2917,7 +7266,24 @@ OpFF: ; $FF BBS7 zpr
   Else
     CpuPC = (CpuPC + 1) & $FFFF
   EndIf
-  NextOp(5)
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuLeft, CpuPC
+      subs.w r11, r11, #5
+      ble.w __ul_cpurun_done
+      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    NextOp(5)
+  CompilerEndIf
 Done:
   CpuInWindow = 0
   CpuCycles = CpuCycles + CpuBudget - CpuLeft

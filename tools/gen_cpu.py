@@ -17,6 +17,7 @@ host address of page 0 (page 1 follows it), which the machine sets with the tabl
 
 Edit this file, then:  py -3 tools/gen_cpu.py
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -508,16 +509,41 @@ Procedure.i CpuElapsed()
 EndProcedure
 '''
 
-RUN_HEAD = '''
-$RAM$.i CpuRun(n.i)
-$DISPATCH$
-Macro NextOp(c)
+NEXTOP_PLAIN = """Macro NextOp(c)
   CpuLeft = CpuLeft - (c)
   If CpuLeft <= 0
     Goto Done
   EndIf
   DispatchNext()
-EndMacro
+EndMacro"""
+
+# The Pico 2 series (RP2350, Cortex-M33): the cycle count and the dispatch in Thumb-2 - the page table
+# read with a scaled index, the byte with a register offset, PC wrapped with UXTH, and the handler
+# reached by loading pc straight from the dispatch table. The Pico W (Cortex-M0+) keeps Thumb-1.
+T2_FETCH = """      lsr.w r1, r8, #8
+      ldr r2, =global_cpurdmap
+      ldr.w r1, [r2, r1, lsl #2]
+      cmp r1, #0
+      beq.w __ul_cpurun_slowfetch
+      ldrb.w r2, [r1, r8]
+      add.w r0, r8, #1
+      uxth.w r8, r0
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]"""
+
+# A macro's parameter is not substituted inside an ASM block (the assembler refuses '#c'), so the
+# Pico build writes each handler's Thumb-2 tail inline with its cycle count (t2_tail).
+NEXTOP_PICO = NEXTOP_PLAIN
+
+def t2_tail(cycles):
+    return ['  CompilerIf #CPU_TAIL_T2 = 1', '    ASM Uses CpuLeft, CpuPC',
+            f'      subs.w r11, r11, #{cycles}', '      ble.w __ul_cpurun_done'] + \
+           T2_FETCH.split(chr(10)) + ['    EndASM', '  CompilerElse', f'    NextOp({cycles})', '  CompilerEndIf']
+
+RUN_HEAD = '''
+$RAM$.i CpuRun(n.i)
+$DISPATCH$
+$NEXTOP$
   If n <= 0
     ProcedureReturn 0
   EndIf
@@ -534,7 +560,8 @@ EndProcedure
 def build(kind):
     lines = [HEADER]
     if kind == 'pico':
-        lines.append('; #CPU_ASM_TAIL: 1 = the Thumb dispatch tail (Pico W), 0 = PureMetal computed Goto.')
+        lines.append('; #CPU_TAIL_T2: 1 = the Thumb-2 tail (Pico 2 series); else #CPU_ASM_TAIL: 1 = the Thumb-1 tail')
+        lines.append('; (Pico W), 0 = PureMetal computed Goto. Define both before including this file.')
         lines.append('EnableExplicit')
     lines.append('Declare.i CpuBusRead(addr.i)')
     lines.append('Declare CpuBusWrite(addr.i, value.i)')
@@ -549,7 +576,11 @@ def build(kind):
     lines.append(COMMON_PROCS.replace('$RAM$', ram))
     if kind == 'pico':
         dispatch = '''Macro DispatchNext()
-  CompilerIf #CPU_ASM_TAIL = 1
+  CompilerIf #CPU_TAIL_T2 = 1
+    ASM Uses CpuPC
+''' + T2_FETCH + '''
+    EndASM
+  CompilerElseIf #CPU_ASM_TAIL = 1
     ASM Uses CpuPC
       mov r0, r8
       lsrs r1, r0, #8
@@ -585,7 +616,11 @@ EndMacro'''
   !goto *(void*)((integer*)a_cpudispatch.a)[g_cputmp];
 EndMacro'''
         slow = ''
-    head = RUN_HEAD.replace('$RAM$', ram).replace('$DISPATCH$', dispatch)
+    if kind == 'pico':
+        nextop = NEXTOP_PICO
+    else:
+        nextop = NEXTOP_PLAIN
+    head = RUN_HEAD.replace('$RAM$', ram).replace('$DISPATCH$', dispatch).replace('$NEXTOP$', nextop)
     lines.append(head.rstrip('\n'))
     for code in range(256):
         lines.append(f'    CpuDispatch(${code:02X}) = ?Op{code:02X}')
@@ -595,7 +630,12 @@ EndMacro'''
     lines.append('  CpuLeft = n')
     lines.append('  CpuInWindow = 1')
     lines.append('  DispatchNext()')
-    lines.extend(BODY)
+    if kind == 'pico':
+        for line in BODY:
+            m = re.match(r'^  NextOp\((\d+)\)$', line)
+            lines.extend(t2_tail(int(m.group(1))) if m else [line])
+    else:
+        lines.extend(BODY)
     lines.append(RUN_TAIL.replace('$SLOW$', slow).rstrip('\n'))
     return '\n'.join(lines) + '\n'
 

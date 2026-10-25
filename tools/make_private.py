@@ -75,7 +75,7 @@ def main():
         lines = [f'; PRIVATE (private/ is ignored by git): the Apple IIc for the {chip} with '
                  + ('its ROM' if rom else 'the test ROM') + (', a disk' if disk_kind else '')
                  + (' and sound' if speaker else '') + '.',
-                 '#CPU_ASM_TAIL = 1', f'#A2_ROM = {1 if rom else 0}', f'#A2_DISK = {1 if disk_kind else 0}',
+                 '#CPU_ASM_TAIL = 1', f'#CPU_TAIL_T2 = {1 if ext == "pico2w" else 0}', f'#A2_ROM = {1 if rom else 0}', f'#A2_DISK = {1 if disk_kind else 0}',
                  f'#A2_AUDIO = {1 if speaker else 0}']
         if rom:
             lines.append('XIncludeFile "rom_data.pmi"')

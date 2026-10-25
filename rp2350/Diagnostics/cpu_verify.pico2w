@@ -1,5 +1,6 @@
 ; The 65C02 core's check on the Pico 2 W (RP2350, 150 MHz): Diagnostics/cpu_verify_body.pmi.
 #CPU_ASM_TAIL = 1
+#CPU_TAIL_T2 = 1                         ; the Thumb-2 tail on the Cortex-M33
 #DIAG_CLOCK_KHZ = 150000
 #DIAG_BOARD$ = "Pico 2 W"
 EnableExplicit
