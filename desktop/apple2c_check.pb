@@ -5,6 +5,8 @@
 ;
 ; TEXT: "\r" is Return. Prints the text screen at the end, the frames per second it ran at (unthrottled),
 ; and with --expect exits 1 unless TEXT is on the screen. --png saves the picture (560 x 384).
+; --span-check: at the end, every line drawn a column span at a time (as the Pico's panel draws what
+; changed) must equal the same columns of the whole line drawn; exits 1 otherwise.
 EnableExplicit
 XIncludeFile "machine.pbi"
 XIncludeFile "cpu_tests.pbi"
@@ -16,6 +18,8 @@ EndStructure
 Global NewList Typing.CheckType()
 
 OpenConsole()
+Define spanCheck.i, c0.i, c1.i, x.i, bad.i, spans.i, line.i
+Dim spanFull.a(560)
 Define traceN.i, peekAt.i = -1, peekFrame.i = -1, resetAt.i = -1, clickMark.i = 1000, clickReport.i, k.i, a$, rom$, frames.i = 120, png$, expect$, cpuTests.i, r$, f.i, t.q, screen$, i.i, c$
 Dim disks$(3)
 For k = 0 To CountProgramParameters() - 1
@@ -29,6 +33,7 @@ For k = 0 To CountProgramParameters() - 1
     Case "--png" : k + 1 : png$ = ProgramParameter(k)
     Case "--expect" : k + 1 : expect$ = ProgramParameter(k)
     Case "--mono" : VMono = 1
+    Case "--span-check" : spanCheck = 1
     Case "--click-times" : clickReport = 1
     Case "--peek" : k + 1 : peekFrame = Val(ProgramParameter(k)) : k + 1 : peekAt = Val("$" + ProgramParameter(k))
     Case "--trace" : k + 1 : traceN = Val(ProgramParameter(k))
@@ -93,7 +98,29 @@ PrintN("---- screen after " + Str(frames) + " frames (" + Str(frames * 1000 / t)
 Print(screen$)
 PrintN("---- disk: reads " + Str(DiskReads) + " writes " + Str(DiskWrites) + " steps " + Str(DiskSteps) + " track " + Str(DiskHalf(1) >> 1) + " errors " + Str(DiskWriteErrors) + "; speaker clicks " + Str(A2SpeakerClicks) + "; keys " + Str(A2KeyTyped))
 If png$ <> "" : MachineSavePng(png$) : PrintN("saved " + png$) : EndIf
+If spanCheck
+  For line = 0 To 191
+    VideoRenderLine(line)
+    For x = 0 To 559 : spanFull(x) = VDots(x) : Next
+    For c0 = 0 To 39
+      For c1 = c0 To 39
+        For x = 0 To 562 : VDots(x) = 99 : VBits(x) = Random(1) : Next
+        VideoRenderSpan(line, c0, c1)
+        spans + 1
+        For x = c0 * 14 To c1 * 14 + 13
+          If VDots(x) <> spanFull(x)
+            If bad < 10 : PrintN("SPAN line " + Str(line) + " columns " + Str(c0) + "-" + Str(c1) + " dot " + Str(x) + ": " + Str(VDots(x)) + " <> " + Str(spanFull(x))) : EndIf
+            bad + 1 : Break
+          EndIf
+        Next
+      Next
+    Next
+  Next
+  VideoRenderLine(0)
+  PrintN("SPAN CHECK: " + Str(spans) + " spans, " + Str(bad) + " wrong")
+EndIf
 For i = 1 To 2 : HostEjectDisk(i) : Next
+If spanCheck And bad : End 1 : EndIf
 If expect$ <> ""
   If FindString(screen$, expect$)
     PrintN("RESULT: PASS (the screen shows " + expect$ + ")")

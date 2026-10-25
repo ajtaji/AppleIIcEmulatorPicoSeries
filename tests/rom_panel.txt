@@ -1,0 +1,11 @@
+# Private build (Ron's IIc ROM 4, Tubers of Fate, no sound): the panel's frame rate and each core's
+# busy share while the IIc boots the disk and the game runs (the status lines).
+wait 1
+screen 40 tart anew or read
+cmd s
+wait 5
+cmd s
+type S
+screen 20 your name
+wait 5
+cmd s

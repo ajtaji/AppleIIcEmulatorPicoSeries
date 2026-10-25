@@ -520,12 +520,14 @@ EndMacro"""
 # The Pico 2 series (RP2350, Cortex-M33): the cycle count and the dispatch in Thumb-2 - the page table
 # read with a scaled index, the byte with a register offset, PC wrapped with UXTH, and the handler
 # reached by loading pc straight from the dispatch table. The Pico W (Cortex-M0+) keeps Thumb-1.
+# The opcode's page (its host address less page * 256) stays in r3 for the handler: its operand is read
+# from it while it is on the same page (t2_operand). The slow fetch (an opcode in I/O) leaves r3 = 0.
 T2_FETCH = """      lsr.w r1, r8, #8
       ldr r2, =global_cpurdmap
-      ldr.w r1, [r2, r1, lsl #2]
-      cmp r1, #0
+      ldr.w r3, [r2, r1, lsl #2]
+      cmp r3, #0
       beq.w __ul_cpurun_slowfetch
-      ldrb.w r2, [r1, r8]
+      ldrb.w r2, [r3, r8]
       add.w r0, r8, #1
       uxth.w r8, r0
       ldr r1, =global_cpudispatch
@@ -534,6 +536,64 @@ T2_FETCH = """      lsr.w r1, r8, #8
 # A macro's parameter is not substituted inside an ASM block (the assembler refuses '#c'), so the
 # Pico build writes each handler's Thumb-2 tail inline with its cycle count (t2_tail).
 NEXTOP_PICO = NEXTOP_PLAIN
+
+# A handler's first operand read, on the Pico 2 series, from the page the tail left in r3 (the operand
+# follows the opcode): one ldrb.w, or for a 16-bit address one unaligned ldrh.w, while the operand is on
+# that page (r8's low byte is not 0, and not 255 for two bytes) and r3 is not 0; otherwise the read the
+# Pico W makes. Measured on the Pico 2 W against the same handlers without it (README).
+T2_TARGETS = {'CpuEa': ('global', ''), 'CpuTmp': ('global', ''), 'CpuVal': ('global', ''),
+              'CpuA': ('r9', 'CpuA'), 'CpuX': ('r4', 'CpuX'), 'CpuRes': ('r10', 'CpuRes')}
+ABS_FETCH = ['  RdB(CpuEa, CpuPC)', '  RdB(CpuTmp, CpuPC + 1)', '  CpuEa = CpuEa | (CpuTmp << 8)']
+
+
+def t2_operand(code, lines):
+    """The CompilerIf block for a handler whose first lines are `lines` (one read or ABS_FETCH)."""
+    slow, done = f't2op_{code:02x}_slow', f't2op_{code:02x}_done'
+    if lines == ABS_FETCH:
+        uses, load = 'CpuPC', ['      uxtb.w r0, r8', f'      cbz r0, {slow}', '      cmp r0, #255', f'      beq {slow}',
+                               '      ldrh.w r0, [r3, r8]', '      ldr r1, =global_cpuea', '      str r0, [r1]']
+    else:
+        m = re.match(r'^  (RdB|RdSB)\((\w+), CpuPC\)$', lines[0])
+        op, dst = m.group(1), m.group(2)
+        where, reg = T2_TARGETS[dst]
+        ld = 'ldrb.w' if op == 'RdB' else 'ldrsb.w'
+        load = ['      tst.w r8, #255', f'      beq {slow}']
+        if where == 'global':
+            uses = 'CpuPC'
+            load += [f'      {ld} r0, [r3, r8]', f'      ldr r1, =global_{dst.lower()}', '      str r0, [r1]']
+        else:
+            uses = 'CpuPC, ' + reg
+            load += [f'      {ld} {where}, [r3, r8]']
+    return (['  CompilerIf #CPU_TAIL_T2 = 1', f'    ASM Uses {uses}', f'      cbz r3, {slow}'] + load +
+            [f'      b {done}', f'    {slow}:', '    EndASM'] + ['  ' + l for l in lines] +
+            ['    ASM', f'    {done}:', '    EndASM', '  CompilerElse'] + ['  ' + l for l in lines] + ['  CompilerEndIf'])
+
+
+def t2_body(body):
+    """The handlers with their first operand read from r3's page (Pico 2 series) and Thumb-2 tails."""
+    res, i = [], 0
+    while i < len(body):
+        line = body[i]
+        m = re.match(r'^Op([0-9A-F]{2}):', line)
+        if m:
+            res.append(line)
+            code = int(m.group(1), 16)
+            if body[i + 1:i + 4] == ABS_FETCH:
+                res += t2_operand(code, ABS_FETCH)
+                i += 4
+                continue
+            r = re.match(r'^  (RdB|RdSB)\((\w+), CpuPC\)$', body[i + 1])
+            if r and r.group(2) in T2_TARGETS:
+                res += t2_operand(code, [body[i + 1]])
+                i += 2
+                continue
+            i += 1
+            continue
+        t = re.match(r'^  NextOp\((\d+)\)$', line)
+        res.extend(t2_tail(int(t.group(1))) if t else [line])
+        i += 1
+    return res
+
 
 def t2_tail(cycles):
     return ['  CompilerIf #CPU_TAIL_T2 = 1', '    ASM Uses CpuLeft, CpuPC',
@@ -608,7 +668,18 @@ EndMacro'''
         slow = '''SlowFetch:
   CpuTmp = CpuIoRead(CpuPC)
   CpuPC = (CpuPC + 1) & $FFFF
-  Goto CpuDispatch(CpuTmp)'''
+  CompilerIf #CPU_TAIL_T2 = 1
+    ; r3 = 0: the handler's operand read takes the slow way (there is no page in r3 to read it from)
+    ASM
+      movs r3, #0
+      ldr r1, =global_cputmp
+      ldr r2, [r1]
+      ldr r1, =global_cpudispatch
+      ldr.w pc, [r1, r2, lsl #2]
+    EndASM
+  CompilerElse
+    Goto CpuDispatch(CpuTmp)
+  CompilerEndIf'''
     else:
         dispatch = '''Macro DispatchNext()
   RdB(CpuTmp, CpuPC)
@@ -631,9 +702,7 @@ EndMacro'''
     lines.append('  CpuInWindow = 1')
     lines.append('  DispatchNext()')
     if kind == 'pico':
-        for line in BODY:
-            m = re.match(r'^  NextOp\((\d+)\)$', line)
-            lines.extend(t2_tail(int(m.group(1))) if m else [line])
+        lines.extend(t2_body(BODY))
     else:
         lines.extend(BODY)
     lines.append(RUN_TAIL.replace('$SLOW$', slow).rstrip('\n'))

@@ -19,6 +19,9 @@
 Global Dim VBits.a(576)                  ; the line as dots, 0/1, before colouring (+ slack)
 Global Dim VDots.a(576)                  ; the line as colours 0-15
 Global VMode.i                           ; the last line's mode (#VM_...)
+; The columns drawn (0-39, a column = 14 dots: a 40-column character or hi-res byte, or an 80-column
+; pair). VideoRenderLine draws them all; the panel draws only the columns that changed.
+Global VidC0.i, VidC1.i = 39, VidR0.i, VidR1.i = 39
 
 #VM_TEXT40 = 0
 #VM_TEXT80 = 1
@@ -120,8 +123,8 @@ EndProcedure
 Global VtAddr.i, VtC.i, VtBits.i, VtK.i, VtX.i, VtCode.i
 Procedure VideoText40(line.i)
   VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
-  VtX = 0
-  For VtC = 0 To 39
+  VtX = VidC0 * 14
+  For VtC = VidC0 To VidC1
     VtBits = VideoCharRow(A2Peek(0, VtAddr + VtC), line & 7)
     For VtK = 0 To 6
       If (VtBits >> VtK) & 1
@@ -136,8 +139,8 @@ EndProcedure
 
 Procedure VideoText80(line.i)
   VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
-  VtX = 0
-  For VtC = 0 To 79
+  VtX = VidC0 * 14
+  For VtC = VidC0 * 2 To VidC1 * 2 + 1
     VtCode = A2Peek(1 - (VtC & 1), VtAddr + (VtC >> 1))
     VtBits = VideoCharRow(VtCode, line & 7)
     For VtK = 0 To 6
@@ -153,8 +156,8 @@ Procedure VideoLores(line.i, double.i)
   Protected c.i, n.i, k.i, x.i, byte.i, width.i, cells.i, bank.i
   VtAddr = A2TextRowAddr(line >> 3, VideoPage2())
   If double : cells = 80 : width = 7 : Else : cells = 40 : width = 14 : EndIf
-  x = 0
-  For c = 0 To cells - 1
+  x = VidC0 * 14
+  For c = VidC0 * (cells / 40) To (VidC1 + 1) * (cells / 40) - 1
     If double
       bank = 1 - (c & 1)
       byte = A2Peek(bank, VtAddr + (c >> 1))
@@ -181,7 +184,7 @@ EndProcedure
 Procedure VideoHires(line.i)
   Protected c.i, k.i, p.i, byte.i, v.i
   VtAddr = VideoHiresAddr(line)
-  For c = 0 To 39
+  For c = VidR0 To VidR1
     byte = A2Peek(0, VtAddr + c)
     p = c * 14
     If byte & $80
@@ -201,8 +204,8 @@ EndProcedure
 Procedure VideoDHires(line.i)
   Protected c.i, k.i, p.i, byte.i
   VtAddr = VideoHiresAddr(line)
-  p = 0
-  For c = 0 To 79
+  p = VidR0 * 14
+  For c = VidR0 * 2 To VidR1 * 2 + 1
     byte = A2Peek(1 - (c & 1), VtAddr + (c >> 1))
     For k = 0 To 6
       VBits(p) = (byte >> k) & 1
@@ -211,17 +214,21 @@ Procedure VideoDHires(line.i)
   Next
 EndProcedure
 
-; VBits -> VDots: the artifact colour of each dot (or white / black in monochrome).
+; VBits -> VDots: the artifact colour of each dot (or white / black in monochrome), columns VidC0-VidC1.
+; The colour at a column's edge takes dots of the columns either side, so VBits holds VidR0-VidR1: one
+; more column each side where there is one.
 Procedure VideoColourBits()
-  Protected x.i, v.i, p.i
+  Protected x.i, v.i, p.i, x0.i
   VBits(560) = 0 : VBits(561) = 0 : VBits(562) = 0
+  x0 = VidC0 * 14
   If VMono
-    For x = 0 To 559 : VDots(x) = VBits(x) * 15 : Next
+    For x = x0 To VidC1 * 14 + 13 : VDots(x) = VBits(x) * 15 : Next
     ProcedureReturn
   EndIf
   ; v holds dots x-1 .. x+2, each at bit (position & 3)
-  v = VBits(0) | (VBits(1) << 1) | (VBits(2) << 2)
-  For x = 0 To 559
+  v = (VBits(x0) << (x0 & 3)) | (VBits(x0 + 1) << ((x0 + 1) & 3)) | (VBits(x0 + 2) << ((x0 + 2) & 3))
+  If x0 > 0 : v = v | (VBits(x0 - 1) << ((x0 - 1) & 3)) : EndIf
+  For x = x0 To VidC1 * 14 + 13
     VDots(x) = v
     p = (x + 3) & 3                      ; dot x-1 leaves, dot x+3 comes in, at the same bit
     v = (v & (15 ! (1 << p))) | (VBits(x + 3) << p)
@@ -230,8 +237,11 @@ EndProcedure
 
 ; ---------------------------------------------------------------- one line
 
-; Render line 0-191 into VDots; returns the mode (#VM_...).
-Procedure.i VideoRenderLine(line.i)
+; Render columns c0-c1 (0-39) of line 0-191 into VDots; returns the mode (#VM_...).
+Procedure.i VideoRenderSpan(line.i, c0.i, c1.i)
+  VidC0 = c0 : VidC1 = c1
+  VidR0 = c0 : If VidR0 > 0 : VidR0 = VidR0 - 1 : EndIf
+  VidR1 = c1 : If VidR1 < 39 : VidR1 = VidR1 + 1 : EndIf
   VMode = VideoLineMode(line)
   Select VMode
     Case #VM_TEXT40 : VideoText40(line)
@@ -242,6 +252,11 @@ Procedure.i VideoRenderLine(line.i)
     Case #VM_DHIRES : VideoDHires(line) : VideoColourBits()
   EndSelect
   ProcedureReturn VMode
+EndProcedure
+
+; Render all of line 0-191 into VDots; returns the mode (#VM_...).
+Procedure.i VideoRenderLine(line.i)
+  ProcedureReturn VideoRenderSpan(line, 0, 39)
 EndProcedure
 
 ; The 16 colours, 24-bit RGB (the usual NTSC Apple II values).

@@ -3,23 +3,35 @@
 ; WIDTH: a line is 560 dots (video.pmi). 40-column text is laid out as 12 pixels a character (the
 ; character's six lit columns, each two pixels wide; the seventh column is always blank and is the one
 ; left out), 80-column text as 6 pixels a character (the same column left out); everything else takes
-; 6 pixels from every 7 dots, so no colour or line ever disappears completely.
+; 6 pixels from every 7 dots, so no colour or line ever disappears completely. Either way a column of
+; 14 dots (video.pmi's VidC0-VidC1) is 12 pixels.
 ; HEIGHT: 192 lines on 320 rows, 5 rows for every 3 lines (1, 2, 2).
-; A line is drawn and sent only when VideoLineHash says what it shows changed: a still screen costs
-; neither core 1 nor the SPI anything.
+;
+; WHAT IS SENT: each line keeps a copy of the bytes it showed (PanelSrc) and of its mode and switches
+; (PanelHdr). A pass compares the screen with the copy 4 bytes at a time and draws only the columns that
+; changed (one more each side in hi-res: the artifact colour takes the dots either side), so a still
+; screen costs neither core 1 nor the SPI anything, and a moving sprite costs its own width.
+; HOW: the panel's SPI stays in 16-bit mode for the whole pass. A command goes as one 16-bit word: its
+; high byte is the panel's NOP ($00). A line's pixels go by DMA while core 1 draws the next line into the
+; other half of PanelOut.
 
 #PANEL_W = 480
 #PANEL_H = 320
 
-Global Dim PanelOut.u(480)
+Global Dim PanelOut.u(1920)              ; two buffers of up to 2 rows of 480
 Global Dim PanelPal.u(16)
 Global Dim PanelMap40.u(480)
 Global Dim PanelMap80.u(480)
-Global Dim PanelHash.l(192)
+Global Dim PanelSrc.l(3840)              ; 192 lines x (10 longs main + 10 longs auxiliary)
+Global Dim PanelHdr.l(192)
+Global Dim PanelFlash.a(192)
 Global Dim PanelRowFirst.u(193)
+Global Dim PanelTxt80.l(4)               ; two pixels from two dots
+Global Dim PanelDouble.l(512)            ; 128 x 16 bytes (longs: aligned)
+Global Dim PanelSingle.l(256)            ; 128 x 8 bytes
 Global PanelForce.i = 1, PanelFrames.i, PanelRowsSent.i, PanelMono.i
+Global PanelLinesSent.i, PanelDrawUs.i, PanelSpiWaitUs.i
 
-Declare VideoSendRow(y.i, pixels.i)
 Declare A2AudioPoll()
 
 Procedure PanelInit()
@@ -34,36 +46,608 @@ Procedure PanelInit()
     PanelMap80(i) = (i * 7) / 6
   Next
   For i = 0 To 192 : PanelRowFirst(i) = (i * 5) / 3 : Next
+  For i = 0 To 3 : PanelTxt80(i) = ((i & 1) * PanelPal(15)) | (((i >> 1) & 1) * PanelPal(15) << 16) : Next
+  ; a 7-bit byte's dots: doubled (hi-res, 16 bytes an entry) and single (double hi-res, 8 bytes)
+  For i = 0 To 127
+    For c = 0 To 13 : PokeA(@PanelDouble(0) + i * 16 + c, (i >> (c >> 1)) & 1) : Next
+    PokeA(@PanelDouble(0) + i * 16 + 14, 0) : PokeA(@PanelDouble(0) + i * 16 + 15, 0)
+    For c = 0 To 6 : PokeA(@PanelSingle(0) + i * 8 + c, (i >> c) & 1) : Next
+    PokeA(@PanelSingle(0) + i * 8 + 7, 0)
+  Next
   PanelForce = 1
 EndProcedure
 
-; VDots -> PanelOut through the map the line's mode needs.
-Procedure PanelMapLine()
-  Protected x.i
-  If VMode = #VM_TEXT40
-    For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap40(x))) : Next
+; ---------------------------------------------------------------- drawing a span
+
+; Columns c0-c1 of line `line` into VDots, as VideoRenderSpan draws them. The colour modes of hi-res and
+; double hi-res are drawn in assembly: the dots from the tables above, then the artifact colour four dots
+; a pass. The M33 (#A2_THUMB2 = 1) copies a byte's dots with unaligned word stores and puts the incoming
+; dot at its bit of the colour cycle with bfi; the M0+ (Thumb-1) copies them a byte at a time and clears
+; the bit with shifts or bics. PanelRenderCheck (monitor command x) compares them with VideoRenderSpan on
+; the board.
+Global PrSrc.i, PrAux.i, PrDst.i, PrN.i, PrBits.i, PrDots.i, PrV.i
+Procedure PanelRenderSpan(line.i, c0.i, c1.i)
+  Protected addr.i, xs.i, xe.i
+  VMode = VideoLineMode(line)
+  If VMono = 0 And VMode >= #VM_HIRES
+    VidC0 = c0 : VidC1 = c1
+    VidR0 = c0 : If VidR0 > 0 : VidR0 = VidR0 - 1 : EndIf
+    VidR1 = c1 : If VidR1 < 39 : VidR1 = VidR1 + 1 : EndIf
+    addr = VideoHiresAddr(line) + VidR0
+    PrSrc = A2Block(addr >> 13) + (addr & $1FFF)
+    PrAux = A2Block(8 + (addr >> 13)) + (addr & $1FFF)
+    PrDst = @VBits(VidR0 * 14)
+    PrN = VidR1 - VidR0 + 1
+    If VMode = #VM_HIRES
+      CompilerIf #A2_THUMB2 = 1
+      ASM
+        push {r4, r5}
+        ldr r0, =global_prsrc
+        ldr r0, [r0]
+        ldr r1, =global_prdst
+        ldr r1, [r1]
+        ldr r2, =global_prn
+        ldr r2, [r2]
+        ldr r3, =global_paneldouble
+        mov.w r12, #0
+      panelhires_t2:
+        ldrb r6, [r0]
+        adds r0, r0, #1
+        and.w r4, r6, #127
+        add.w r4, r3, r4, lsl #4
+        tst.w r6, #128
+        bne panelhires_t2_shift
+        ldr r5, [r4]
+        str r5, [r1]
+        ldr r5, [r4, #4]
+        str r5, [r1, #4]
+        ldr r5, [r4, #8]
+        str r5, [r1, #8]
+        ldrh r5, [r4, #12]
+        strh r5, [r1, #12]
+        ldrb.w r12, [r4, #13]
+        b panelhires_t2_next
+      panelhires_t2_shift:
+        strb.w r12, [r1]
+        ldr r5, [r4]
+        str.w r5, [r1, #1]
+        ldr r5, [r4, #4]
+        str.w r5, [r1, #5]
+        ldr r5, [r4, #8]
+        str.w r5, [r1, #9]
+        ldrb r5, [r4, #12]
+        strb.w r5, [r1, #13]
+        ldrb.w r12, [r4, #12]
+      panelhires_t2_next:
+        adds r1, r1, #14
+        subs r2, r2, #1
+        bne panelhires_t2
+        pop {r4, r5}
+      EndASM
+      CompilerElse
+      ASM
+        push {r4, r5, r7}
+        ldr r0, =global_prsrc
+        ldr r0, [r0]
+        ldr r1, =global_prdst
+        ldr r1, [r1]
+        ldr r2, =global_prn
+        ldr r2, [r2]
+        ldr r3, =global_paneldouble
+        movs r7, #0
+      panelhires_t1:
+        ldrb r6, [r0]
+        adds r0, r0, #1
+        lsls r4, r6, #25
+        lsrs r4, r4, #21
+        adds r4, r3, r4
+        lsls r5, r6, #24
+        bpl panelhires_t1_plain
+        strb r7, [r1]
+        adds r1, r1, #1
+      panelhires_t1_plain:
+        ldrb r5, [r4, #0]
+        strb r5, [r1, #0]
+        ldrb r5, [r4, #1]
+        strb r5, [r1, #1]
+        ldrb r5, [r4, #2]
+        strb r5, [r1, #2]
+        ldrb r5, [r4, #3]
+        strb r5, [r1, #3]
+        ldrb r5, [r4, #4]
+        strb r5, [r1, #4]
+        ldrb r5, [r4, #5]
+        strb r5, [r1, #5]
+        ldrb r5, [r4, #6]
+        strb r5, [r1, #6]
+        ldrb r5, [r4, #7]
+        strb r5, [r1, #7]
+        ldrb r5, [r4, #8]
+        strb r5, [r1, #8]
+        ldrb r5, [r4, #9]
+        strb r5, [r1, #9]
+        ldrb r5, [r4, #10]
+        strb r5, [r1, #10]
+        ldrb r5, [r4, #11]
+        strb r5, [r1, #11]
+        ldrb r5, [r4, #12]
+        strb r5, [r1, #12]
+        ldrb r5, [r4, #13]
+        strb r5, [r1, #13]
+        ldrb r7, [r4, #13]
+        lsrs r5, r6, #7
+        subs r1, r1, r5
+        adds r1, r1, #14
+        subs r2, r2, #1
+        bne panelhires_t1
+        pop {r4, r5, r7}
+      EndASM
+      CompilerEndIf
+    Else
+      CompilerIf #A2_THUMB2 = 1
+      ASM
+        push {r4, r5}
+        ldr r0, =global_praux
+        ldr r0, [r0]
+        ldr r4, =global_prsrc
+        ldr r4, [r4]
+        mov r12, r4
+        ldr r1, =global_prdst
+        ldr r1, [r1]
+        ldr r2, =global_prn
+        ldr r2, [r2]
+        ldr r3, =global_panelsingle
+      paneldhires_t2:
+        ldrb r4, [r0]
+        adds r0, r0, #1
+        and.w r4, r4, #127
+        add.w r4, r3, r4, lsl #3
+        ldr r5, [r4]
+        str r5, [r1]
+        ldr r5, [r4, #4]
+        str.w r5, [r1, #4]
+        ldrb.w r4, [r12]
+        add.w r12, r12, #1
+        and.w r4, r4, #127
+        add.w r4, r3, r4, lsl #3
+        ldr r5, [r4]
+        str.w r5, [r1, #7]
+        ldr r5, [r4, #4]
+        str.w r5, [r1, #11]
+        adds r1, r1, #14
+        subs r2, r2, #1
+        bne paneldhires_t2
+        pop {r4, r5}
+      EndASM
+      CompilerElse
+      ASM
+        push {r4, r5}
+        ldr r0, =global_praux
+        ldr r0, [r0]
+        ldr r6, =global_prsrc
+        ldr r6, [r6]
+        ldr r1, =global_prdst
+        ldr r1, [r1]
+        ldr r2, =global_prn
+        ldr r2, [r2]
+        ldr r3, =global_panelsingle
+      paneldhires_t1:
+        ldrb r4, [r0]
+        adds r0, r0, #1
+        lsls r4, r4, #25
+        lsrs r4, r4, #22
+        adds r4, r3, r4
+        ldrb r5, [r4, #0]
+        strb r5, [r1, #0]
+        ldrb r5, [r4, #1]
+        strb r5, [r1, #1]
+        ldrb r5, [r4, #2]
+        strb r5, [r1, #2]
+        ldrb r5, [r4, #3]
+        strb r5, [r1, #3]
+        ldrb r5, [r4, #4]
+        strb r5, [r1, #4]
+        ldrb r5, [r4, #5]
+        strb r5, [r1, #5]
+        ldrb r5, [r4, #6]
+        strb r5, [r1, #6]
+        ldrb r4, [r6]
+        adds r6, r6, #1
+        lsls r4, r4, #25
+        lsrs r4, r4, #22
+        adds r4, r3, r4
+        ldrb r5, [r4, #0]
+        strb r5, [r1, #7]
+        ldrb r5, [r4, #1]
+        strb r5, [r1, #8]
+        ldrb r5, [r4, #2]
+        strb r5, [r1, #9]
+        ldrb r5, [r4, #3]
+        strb r5, [r1, #10]
+        ldrb r5, [r4, #4]
+        strb r5, [r1, #11]
+        ldrb r5, [r4, #5]
+        strb r5, [r1, #12]
+        ldrb r5, [r4, #6]
+        strb r5, [r1, #13]
+        adds r1, r1, #14
+        subs r2, r2, #1
+        bne paneldhires_t1
+        pop {r4, r5}
+      EndASM
+      CompilerEndIf
+    EndIf
+    For xs = 560 To 568 : VBits(xs) = 0 : Next
+    ; the colour, dots xs-xe: xs on a multiple of 4 (so dot x is at bit x & 3 = its place in the loop)
+    xs = (c0 * 14) & ~3
+    xe = c1 * 14 + 13 : xe = xe | 3
+    PrV = VBits(xs) | (VBits(xs + 1) << 1) | (VBits(xs + 2) << 2)
+    If xs > 0 : PrV = PrV | (VBits(xs - 1) << 3) : EndIf
+    PrBits = @VBits(xs) : PrDots = @VDots(xs) : PrN = (xe - xs + 1) >> 2
+    CompilerIf #A2_THUMB2 = 1
+    ASM
+      ldr r0, =global_prbits
+      ldr r0, [r0]
+      ldr r1, =global_prdots
+      ldr r1, [r1]
+      ldr r2, =global_prn
+      ldr r2, [r2]
+      ldr r3, =global_prv
+      ldr r3, [r3]
+    panelcolour_t2:
+      strb r3, [r1]
+      ldrb r6, [r0, #3]
+      bfi r3, r6, #3, #1
+      strb r3, [r1, #1]
+      ldrb r6, [r0, #4]
+      bfi r3, r6, #0, #1
+      strb r3, [r1, #2]
+      ldrb r6, [r0, #5]
+      bfi r3, r6, #1, #1
+      strb r3, [r1, #3]
+      ldrb r6, [r0, #6]
+      bfi r3, r6, #2, #1
+      adds r0, r0, #4
+      adds r1, r1, #4
+      subs r2, r2, #1
+      bne panelcolour_t2
+    EndASM
+    CompilerElse
+    ASM
+      push {r4, r5}
+      ldr r0, =global_prbits
+      ldr r0, [r0]
+      ldr r1, =global_prdots
+      ldr r1, [r1]
+      ldr r2, =global_prn
+      ldr r2, [r2]
+      ldr r3, =global_prv
+      ldr r3, [r3]
+      movs r4, #2
+      movs r5, #4
+    panelcolour_t1:
+      strb r3, [r1]
+      ldrb r6, [r0, #3]
+      lsls r3, r3, #29
+      lsrs r3, r3, #29
+      lsls r6, r6, #3
+      orrs r3, r6
+      strb r3, [r1, #1]
+      ldrb r6, [r0, #4]
+      lsrs r3, r3, #1
+      lsls r3, r3, #1
+      orrs r3, r6
+      strb r3, [r1, #2]
+      ldrb r6, [r0, #5]
+      bics r3, r4
+      lsls r6, r6, #1
+      orrs r3, r6
+      strb r3, [r1, #3]
+      ldrb r6, [r0, #6]
+      bics r3, r5
+      lsls r6, r6, #2
+      orrs r3, r6
+      adds r0, r0, #4
+      adds r1, r1, #4
+      subs r2, r2, #1
+      bne panelcolour_t1
+      pop {r4, r5}
+    EndASM
+    CompilerEndIf
+    ProcedureReturn
+  EndIf
+  VideoRenderSpan(line, c0, c1)
+EndProcedure
+
+
+; ---------------------------------------------------------------- the SPI, 16 bits wide, for one pass
+
+Global PsBase.i, PsCtrl.i, PsOpen.i
+
+Procedure PanelSpiOpen()
+  PsBase = __SpiBase(tft796_spi)
+  SpiDmaInit()
+  SpiSetBits(tft796_spi, 16)
+  PokeL(PsBase + 36, PeekL(PsBase + 36) | #SPI_SSPDMACR_TXDMAE)
+  PsCtrl = #SPI_DMA_EN | #SPI_DMA_SIZE_HALF | #SPI_DMA_INCR_READ | (SpiDmaTreq(tft796_spi) << #PANEL_DMA_TREQ_SHIFT)
+  Tft796PinSet(tft796_cs, 0)
+  PsOpen = 1
+EndProcedure
+
+; Wait until the last DMA transfer and the SPI's FIFO are done (DC may change only then).
+Procedure PanelSpiIdle()
+  While PeekL(#SPI_DMA_CH0_CTRL) & #SPI_DMA_BUSY : Wend
+  While PeekL(PsBase + 12) & $10 : Wend  ; SSPSR.BSY
+EndProcedure
+
+Procedure PanelSpiWord(w.i)
+  While (PeekL(PsBase + 12) & 2) = 0 : Wend   ; SSPSR.TNF
+  PokeL(PsBase + 8, w)
+EndProcedure
+
+; The window x0-x1, y0-y1, then RAMWR: what follows is pixels.
+Procedure PanelSpiWindow(x0.i, y0.i, x1.i, y1.i)
+  Protected t.i
+  t = Micros()
+  PanelSpiIdle()
+  PanelSpiWaitUs = PanelSpiWaitUs + Micros() - t
+  Tft796PinSet(tft796_dc, 0) : PanelSpiWord(#TFT796_CASET) : PanelSpiIdle()
+  Tft796PinSet(tft796_dc, 1) : PanelSpiWord(x0) : PanelSpiWord(x1) : PanelSpiIdle()
+  Tft796PinSet(tft796_dc, 0) : PanelSpiWord(#TFT796_RASET) : PanelSpiIdle()
+  Tft796PinSet(tft796_dc, 1) : PanelSpiWord(y0) : PanelSpiWord(y1) : PanelSpiIdle()
+  Tft796PinSet(tft796_dc, 0) : PanelSpiWord(#TFT796_RAMWR) : PanelSpiIdle()
+  Tft796PinSet(tft796_dc, 1)
+EndProcedure
+
+; Start n pixels from buf going out; returns at once.
+Procedure PanelSpiPixels(buf.i, n.i)
+  PokeL(#SPI_DMA_CH0_READ, buf)
+  PokeL(#SPI_DMA_CH0_WRITE, PsBase + 8)
+  PokeL(#SPI_DMA_CH0_COUNT, n)
+  PokeL(#SPI_DMA_CH0_CTRL, PsCtrl)
+EndProcedure
+
+Procedure PanelSpiClose()
+  PanelSpiIdle()
+  Tft796PinSet(tft796_cs, 1)
+  SpiDmaRestore(tft796_spi)
+  PsOpen = 0
+EndProcedure
+
+; ---------------------------------------------------------------- what changed
+
+; Compare line `line` with its copy; 1 = draw columns PdC0-PdC1.
+Global PdC0.i, PdC1.i, PdForce.i
+Procedure.i PanelDirty(line.i)
+  Protected hdr.i, addr.i, src.i, old.i, w.i, n.i, w0.i, w1.i, wide.i, b.i
+  VMode = VideoLineMode(line)
+  hdr = VMode | (VMono << 4) | (A2AltChar << 5)
+  If VMode <= #VM_DLORES
+    addr = A2TextRowAddr(line >> 3, VideoPage2())
   Else
-    For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap80(x))) : Next
+    addr = VideoHiresAddr(line)
+  EndIf
+  wide = Bool(VMode = #VM_TEXT80 Or VMode = #VM_DLORES Or VMode = #VM_DHIRES)
+  w0 = 10 : w1 = -1
+  src = A2Block(addr >> 13) + (addr & $1FFF)
+  old = @PanelSrc(line * 20)
+  For w = 0 To 36 Step 4
+    n = PeekL(src + w)
+    If n <> PeekL(old + w)
+      PokeL(old + w, n)
+      If w0 = 10 : w0 = w >> 2 : EndIf
+      w1 = w >> 2
+    EndIf
+  Next
+  If wide
+    src = A2Block(8 + (addr >> 13)) + (addr & $1FFF)
+    old = old + 40
+    For w = 0 To 36 Step 4
+      n = PeekL(src + w)
+      If n <> PeekL(old + w)
+        PokeL(old + w, n)
+        If w >> 2 < w0 : w0 = w >> 2 : EndIf
+        If w >> 2 > w1 : w1 = w >> 2 : EndIf
+      EndIf
+    Next
+  EndIf
+  ; the flashing characters: only a text line that holds one ($40-$7F in the primary set) flashes
+  If VMode <= #VM_TEXT80 And A2AltChar = 0
+    If w1 >= 0 Or PdForce Or (PanelHdr(line) & $3F) <> hdr
+      PanelFlash(line) = 0
+      old = @PanelSrc(line * 20)
+      For w = 0 To 39 + wide * 40
+        b = PeekA(old + w)
+        If (b & $C0) = $40 : PanelFlash(line) = 1 : Break : EndIf
+      Next
+    EndIf
+    If PanelFlash(line) : hdr = hdr | (VFlash << 6) : EndIf
+  EndIf
+  If PdForce Or hdr <> PanelHdr(line)
+    PanelHdr(line) = hdr
+    PdC0 = 0 : PdC1 = 39
+    ProcedureReturn 1
+  EndIf
+  If w1 < 0 : ProcedureReturn 0 : EndIf
+  PdC0 = w0 * 4 : PdC1 = w1 * 4 + 3
+  If VMode >= #VM_HIRES
+    If PdC0 > 0 : PdC0 = PdC0 - 1 : EndIf
+    If PdC1 < 39 : PdC1 = PdC1 + 1 : EndIf
+  EndIf
+  ProcedureReturn 1
+EndProcedure
+
+; ---------------------------------------------------------------- one pass
+
+; VDots columns PdC0-PdC1 -> `rows` copies of their pixels at buf.
+Global PmEnd.i, PmMapEnd.i, PmNeg.i
+Procedure PanelMapSpan(buf.i)
+  Protected x1.i
+  x1 = PdC1 * 12 + 11
+  ; the index runs from -n up to 0 against the ends of the map and of the pixels (a register offset
+  ; may be negative)
+  PmNeg = PdC0 * 12 - x1 - 1
+  PmEnd = buf - PmNeg * 2
+  If VMode = #VM_TEXT40 : PmMapEnd = @PanelMap40(x1 + 1) : Else : PmMapEnd = @PanelMap80(x1 + 1) : EndIf
+  CompilerIf #A2_THUMB2 = 1
+    ; the M33: six instructions a pixel
+    ASM
+      ldr r0, =global_pmend
+      ldr r0, [r0]
+      ldr r1, =global_pmmapend
+      ldr r1, [r1]
+      ldr r2, =global_pmneg
+      ldr r2, [r2]
+      ldr r3, =global_vdots
+      ldr r6, =global_panelpal
+    panelmapspan_t2:
+      ldrh.w r12, [r1, r2, lsl #1]
+      ldrb.w r12, [r3, r12]
+      ldrh.w r12, [r6, r12, lsl #1]
+      strh.w r12, [r0, r2, lsl #1]
+      adds r2, r2, #1
+      bne panelmapspan_t2
+    EndASM
+  CompilerElse
+    ; the M0+: seven instructions a pixel, the index in bytes
+    ASM
+      push {r4}
+      ldr r0, =global_pmend
+      ldr r0, [r0]
+      ldr r1, =global_pmmapend
+      ldr r1, [r1]
+      ldr r2, =global_pmneg
+      ldr r2, [r2]
+      lsls r2, r2, #1
+      ldr r3, =global_vdots
+      ldr r4, =global_panelpal
+    panelmapspan_t1:
+      ldrh r6, [r1, r2]
+      ldrb r6, [r3, r6]
+      lsls r6, r6, #1
+      ldrh r6, [r4, r6]
+      strh r6, [r0, r2]
+      adds r2, r2, #2
+      bne panelmapspan_t1
+      pop {r4}
+    EndASM
+  CompilerEndIf
+EndProcedure
+
+; A line on 2 rows: the second row a copy of the first (columns PdC0-PdC1), 8 bytes a pass (a column
+; is 24 bytes).
+Procedure PanelRowCopy(buf.i, rows.i)
+  If rows = 2
+    PmEnd = buf + (PdC1 - PdC0 + 1) * 24
+    PmNeg = PmEnd - buf
+    ASM
+      ldr r0, =global_pmend
+      ldr r0, [r0]
+      ldr r1, =global_pmneg
+      ldr r1, [r1]
+      subs r2, r0, r1
+      lsrs r1, r1, #3
+    panelrowcopy_loop:
+      ldmia r2!, {r3, r6}
+      stmia r0!, {r3, r6}
+      subs r1, r1, #1
+      bne panelrowcopy_loop
+    EndASM
   EndIf
 EndProcedure
 
-; One pass over the picture (core 1): draw and send the lines that changed.
-Global PfLine.i, PfHash.l, PfRow.i, PfForce.i
-Procedure PanelFrame()
-  PfForce = PanelForce : PanelForce = 0
-  If PanelMono <> VMono : VMono = PanelMono : PfForce = 1 : EndIf
-  For PfLine = 0 To 191
-    PfHash = VideoLineHash(PfLine)
-    If PfForce Or PfHash <> PanelHash(PfLine)
-      PanelHash(PfLine) = PfHash
-      VideoRenderLine(PfLine)
-      PanelMapLine()
-      For PfRow = PanelRowFirst(PfLine) To PanelRowFirst(PfLine + 1) - 1
-        VideoSendRow(PfRow, @PanelOut(0))
-        PanelRowsSent = PanelRowsSent + 1
+; Text, lo-res and double lo-res in colour go straight to pixels: a 12-pixel column there is one or two
+; colours, or six dots of a character (the seventh is the one the panel leaves out), so there are no
+; dots to draw first. 1 = drawn; 0 = not one of these (hi-res, double hi-res, or monochrome lo-res).
+Global PdAddr.i, PdC.i, PdD.i, PdB.i, PdP.i, PdN.i, PdRow.i, PdW.i
+Procedure.i PanelDirect(line.i, buf.i)
+  VMode = VideoLineMode(line)
+  If VMode >= #VM_HIRES Or (VMono And VMode >= #VM_LORES) : ProcedureReturn 0 : EndIf
+  PdAddr = A2TextRowAddr(line >> 3, VideoPage2())
+  PdD = buf
+  PdRow = line & 7
+  PdW = PanelPal(15) | (PanelPal(15) << 16)
+  Select VMode
+    Case #VM_TEXT40
+      For PdC = PdC0 To PdC1
+        PdB = VideoCharRow(A2Peek(0, PdAddr + PdC), PdRow)
+        If PdB & 1 : PokeL(PdD, PdW) : Else : PokeL(PdD, 0) : EndIf
+        If PdB & 2 : PokeL(PdD + 4, PdW) : Else : PokeL(PdD + 4, 0) : EndIf
+        If PdB & 4 : PokeL(PdD + 8, PdW) : Else : PokeL(PdD + 8, 0) : EndIf
+        If PdB & 8 : PokeL(PdD + 12, PdW) : Else : PokeL(PdD + 12, 0) : EndIf
+        If PdB & 16 : PokeL(PdD + 16, PdW) : Else : PokeL(PdD + 16, 0) : EndIf
+        If PdB & 32 : PokeL(PdD + 20, PdW) : Else : PokeL(PdD + 20, 0) : EndIf
+        PdD = PdD + 24
       Next
+    Case #VM_TEXT80
+      For PdC = PdC0 To PdC1
+        PdB = VideoCharRow(A2Peek(1, PdAddr + PdC), PdRow)
+        PokeL(PdD, PanelTxt80(PdB & 3)) : PokeL(PdD + 4, PanelTxt80((PdB >> 2) & 3)) : PokeL(PdD + 8, PanelTxt80((PdB >> 4) & 3))
+        PdB = VideoCharRow(A2Peek(0, PdAddr + PdC), PdRow)
+        PokeL(PdD + 12, PanelTxt80(PdB & 3)) : PokeL(PdD + 16, PanelTxt80((PdB >> 2) & 3)) : PokeL(PdD + 20, PanelTxt80((PdB >> 4) & 3))
+        PdD = PdD + 24
+      Next
+    Case #VM_LORES
+      For PdC = PdC0 To PdC1
+        PdB = A2Peek(0, PdAddr + PdC)
+        If line & 4 : PdB = PdB >> 4 : EndIf
+        PdP = PanelPal(PdB & 15) : PdP = PdP | (PdP << 16)
+        PokeL(PdD, PdP) : PokeL(PdD + 4, PdP) : PokeL(PdD + 8, PdP)
+        PokeL(PdD + 12, PdP) : PokeL(PdD + 16, PdP) : PokeL(PdD + 20, PdP)
+        PdD = PdD + 24
+      Next
+    Case #VM_DLORES
+      For PdC = PdC0 To PdC1
+        ; the auxiliary byte sits one quarter of the colour cycle earlier (video.pmi)
+        PdB = A2Peek(1, PdAddr + PdC)
+        If line & 4 : PdB = PdB >> 4 : EndIf
+        PdN = PdB & 15 : PdN = ((PdN >> 1) | (PdN << 3)) & 15
+        PdP = PanelPal(PdN) : PdP = PdP | (PdP << 16)
+        PokeL(PdD, PdP) : PokeL(PdD + 4, PdP) : PokeL(PdD + 8, PdP)
+        PdB = A2Peek(0, PdAddr + PdC)
+        If line & 4 : PdB = PdB >> 4 : EndIf
+        PdP = PanelPal(PdB & 15) : PdP = PdP | (PdP << 16)
+        PokeL(PdD + 12, PdP) : PokeL(PdD + 16, PdP) : PokeL(PdD + 20, PdP)
+        PdD = PdD + 24
+      Next
+  EndSelect
+  ProcedureReturn 1
+EndProcedure
+
+; Line `line`, columns PdC0-PdC1, as panel pixels at buf (`rows` copies).
+Procedure PanelDrawSpan(line.i, buf.i, rows.i)
+  If PanelDirect(line, buf) = 0
+    PanelRenderSpan(line, PdC0, PdC1)
+    PanelMapSpan(buf)
+  EndIf
+  PanelRowCopy(buf, rows)
+EndProcedure
+
+; One pass over the picture (core 1): draw and send what changed.
+Global PfLine.i, PfRows.i, PfBuf.i, PfHalf.i, PfT.i
+Procedure PanelFrame()
+  PdForce = PanelForce : PanelForce = 0
+  If PanelMono <> VMono : VMono = PanelMono : PdForce = 1 : EndIf
+  For PfLine = 0 To 191
+    If PanelDirty(PfLine)
+      PfT = Micros()
+      PfRows = PanelRowFirst(PfLine + 1) - PanelRowFirst(PfLine)
+      PfBuf = @PanelOut(PfHalf * 960)
+      PanelDrawSpan(PfLine, PfBuf, PfRows)
+      PanelDrawUs = PanelDrawUs + Micros() - PfT
+      If PsOpen = 0 : PanelSpiOpen() : EndIf
+      PanelSpiWindow(PdC0 * 12, PanelRowFirst(PfLine), PdC1 * 12 + 11, PanelRowFirst(PfLine) + PfRows - 1)
+      PanelSpiPixels(PfBuf, (PdC1 - PdC0 + 1) * 12 * PfRows)
+      PfHalf = PfHalf ! 1
+      PanelLinesSent = PanelLinesSent + 1
+      PanelRowsSent = PanelRowsSent + PfRows
     EndIf
     A2AudioPoll()
   Next
+  If PsOpen
+    PfT = Micros()
+    PanelSpiClose()
+    PanelSpiWaitUs = PanelSpiWaitUs + Micros() - PfT
+  EndIf
   PanelFrames = PanelFrames + 1
 EndProcedure

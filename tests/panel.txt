@@ -1,0 +1,14 @@
+# The panel's frame rate and each core's busy share (the status lines): a still text screen, then the
+# PureMetal demo (the rainbow, the scroller, the tune) for 15 s.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+wait 6
+cmd s
+type D
+screen 20 APPLE IIC  DEMO
+wait 5
+cmd s
+wait 5
+cmd s
+wait 5
+cmd s

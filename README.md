@@ -50,12 +50,22 @@ look, not the IIc's RGB adapter.
 Pico W, 200 MHz; the CPU core and its dispatch run from SRAM. On the Pico 2 series (`#CPU_TAIL_T2 = 1`)
 each handler ends in a Thumb-2 tail: the cycle count and the next opcode's dispatch in ten instructions
 (`subs.w`/`ble.w`, the page table read with a scaled index, `ldrb.w` with a register offset, `uxth`, and
-`ldr.w pc` straight from the dispatch table) where the Pico W's Thumb-1 tail takes nineteen. Guest RAM is 128 KB in sixteen 8 KB
+`ldr.w pc` straight from the dispatch table) where the Pico W's Thumb-1 tail takes nineteen. The tail leaves the opcode's page in r3, and a handler's first operand read takes
+its byte (or, for a 16-bit address, both bytes with one unaligned `ldrh.w`) straight from it while the
+operand is on that page. Guest RAM is 128 KB in sixteen 8 KB
 blocks. Core 0 runs the machine paced to the real IIc (59.92 frames a second, 17030 cycles each);
-core 1 draws the panel, a line only when what it shows changed, and keeps the Bluetooth radio going.
+core 1 draws the panel, once for every frame core 0 finishes, and keeps the Bluetooth radio going.
 
 Panel: 560 dots to 480 pixels (40-column text 12 pixels a character, 80-column 6, graphics 6 of every
-7 dots), 192 lines to 320 rows (5 for every 3).
+7 dots), 192 lines to 320 rows (5 for every 3). Each line keeps a copy of the bytes it showed; a pass
+compares the screen with it 4 bytes at a time and draws and sends only the columns that changed (one
+more each side in hi-res, for the artifact colour). The SPI stays 16 bits wide for the whole pass (a
+command goes as one 16-bit word whose high byte is the panel's NOP), and a line's pixels go by DMA
+while core 1 draws the next. Text, lo-res and double lo-res go straight to pixels; hi-res and double
+hi-res are drawn by assembly - Thumb-1 on the Pico W, Thumb-2 on the Pico 2 series (unaligned word
+stores of each byte's dots from a table, `bfi` for the colour, scaled-index loads for the pixel map).
+Monitor command `x` checks the panel's drawing against the shared renderer on the board, pixel for
+pixel, every line in spans (`tests/panelcheck.txt`).
 
 Flash: the program and its data stay below $40000 (other programs on the shared boards keep data
 above). A disk is stored in the image packed a track at a time (`tools/lzpack.py`) and unpacked into
@@ -72,7 +82,10 @@ py -3 tools/console.py --port COM7
 
 Over USB, Ctrl+] then a letter is a monitor command: `s` status, `t` the screen as text, `c` capture
 the panel's picture, `p` CPU and switches, `f` full speed, `m` monochrome, `r` Ctrl+Reset, `R` power
-off and on, `d` disk, `k` keyboard, `o`/`a` hold Open-/Solid-Apple for the next key.
+off and on, `d` disk, `k` keyboard, `o`/`a` hold Open-/Solid-Apple for the next key, `x` check the
+panel's drawing, `v` status lines on/off. The status line gives each core's busy share
+(`core0_busy_pct`, `core1_busy_pct`), the panel's passes a second x10 (`panel_fps_x10`), the frames it
+missed and its longest pass (`pass_max_us`).
 
 ## The desktop
 
@@ -100,6 +113,13 @@ click a line to break there, the stack), Switches, Memory (as the CPU sees it, m
 | Pico W with the IIc ROM 4, Tubers of Fate waiting for a key: paced / unthrottled | 1020 kHz, core 0 13% busy / 7.77 MHz = 7.6x a IIc |
 | Pico 2 W (150 MHz), 65C02 core alone / whole machine unthrottled, Thumb-1 tail | 5.96-6.53 MHz / 5.17 MHz |
 | Pico 2 W, the Thumb-2 tail (2026-10-25, compiler 9777f6cd6; same tests, all pass) | 6.68-7.46 MHz (+12-14%) / 5.70 MHz (+10%) |
+| Pico W panel, the PureMetal demo (lo-res page swaps every few frames, the scroller; `tests/panel.txt`), before / after the panel rework (2026-10-25, compiler 883c4ae12) | 13.6 updates a second, the longest 73.6 ms / 60 a second, one for every machine frame, none missed, the longest (a whole page swap, 168 lines) 24.5 ms |
+| Pico W, each core's share, the demo / Tubers of Fate (IIc ROM 4) at a title screen | core 0 14% / 12%, core 1 21% / 4% (the panel and the speaker) |
+| Pico 2 W panel, the demo, before / after | about 13 updates a second, the longest 83.9 ms / 60 a second, none missed, the longest 32.4 ms (its SPI runs at 75 MHz: 150 MHz / 2) |
+| Pico 2 W, each core's share, the demo | core 0 13%, core 1 26% |
+| The panel's drawing of a whole screen: assembly or direct pixels / the shared renderer and the map in PureMetal | Pico 2 W hi-res 12.8 / 68.3 ms, double hi-res 12.8 / 76.1, 40-column text 11.1 / 38.9, lo-res 7.1 / 36.8; Pico W hi-res 14.1 / 66.8, double hi-res 14.1 / 74.6, text 10.4 / 35.9, lo-res 6.7 / 46.6 |
+| Pico 2 W, the 65C02 operand fetch in Thumb-2 (2026-10-25, compiler 341fd5aca; the same handlers before / after) | Klaus 65C02 7465 / 8381 kHz (+12.3%), 6502 functional 6680 / 7393 kHz (+10.7%), the same cycle counts, 3072/3072 vectors |
+| Pico W, whole machine unthrottled (the test disk), before / after the panel rework | 4.62-5.77 MHz / 4.63-5.81 MHz; the CPU check images are byte-identical on both chips |
 | Desktop, 65C02 core alone (6502 functional test, 30,646,176 instructions) | 175 M instructions/s (C computed goto), 172 M through a procedure table |
 | Desktop, whole machine paced | 60.0 frames/s, 1.02 MHz |
 
@@ -126,6 +146,10 @@ a second at the real IIc's speed (the drawing is compiled 6502 code on a 1 MHz m
 | Pico W, Pico 2 W | the test disk | `tests/diskboot.txt` with `rp2040/Diagnostics/disk_boot.picow` / `rp2350/...pico2w` |
 | Pico 2 W | everything above: CPU check, test ROM, test disk, demo | `tools/board.ps1 -Port COM6 -Jobs ...` |
 | Pico W, Pico 2 W | the PureMetal demo | `tests/demo.txt` with `*/Diagnostics/demo.*` |
+| Pico W, Pico 2 W | the panel's drawing against the renderer, every mode (`x`) | `tests/panelcheck.txt` with `*/Diagnostics/demo.*` |
+| Pico W, Pico 2 W | the panel's frame rate and each core's busy share (status line) | `tests/panel.txt` with `*/Diagnostics/demo.*`; `tests/rom_panel.txt` with a private build |
+| PC | every span of every line drawn alone equals the whole line | `apple2c_check.exe --span-check` |
+| Pico W, Pico 2 W | the whole machine unthrottled while the test disk is read (status line) | `tests/machine_speed.txt` with `*/Diagnostics/disk_boot.*` |
 
 Test inputs: `tools/fetch_tests.py`, then `tools/make_vectors.py` and `tools/embed_tests.py`.
 

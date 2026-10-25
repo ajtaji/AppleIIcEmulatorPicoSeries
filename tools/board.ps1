@@ -1,8 +1,10 @@
-# Build board programs, take the COM7 lease (C:\PMFBuild\board-leases\lease.ps1) once, upload each with
-# PureMetalForge's own uploader, capture its USB serial output, optionally run a tools/board.py script
-# against it, give the lease back. Run it from Bash (powershell.exe -File tools/board.ps1 ...): a lease
-# the PowerShell tool's sandbox makes or removes is not seen by the other sessions (side-session notes,
-# 2026-10-23).
+# Build board programs, then take the board's lease (C:\PMFBuild\board-leases\lease.ps1) for the board
+# step alone: upload each built image as it is with PureMetalForge's own uploader (--radio-firmware: no
+# compile inside the lease), read its USB serial output or run a tools/board.py script against it, give
+# the lease back in a finally (BOARDS.md, Ron 2026-10-25: a lease holds a board only while it is used).
+# Every read has a hard end: Seconds (no script) or ScriptSeconds (the script's deadline). Run it from
+# Bash (powershell.exe -File tools/board.ps1 ...): a lease the PowerShell tool's sandbox makes or removes
+# is not seen by the other sessions (side-session notes, 2026-10-23).
 #   one job:   tools/board.ps1 -Source rp2040/Diagnostics/cpu_verify.picow -Output build/cpu_verify.uf2 -Seconds 80
 #   several:   tools/board.ps1 -Jobs "src|out|seconds|script|scriptSeconds;src|out|..."  (script may be empty)
 param(
@@ -11,7 +13,6 @@ param(
   [int]$Seconds = 30,
   [string]$Port = 'COM7',
   [string]$Compiler = 'C:\Users\ajtaj\Desktop\Github\PureBasicCode\OpenGl Work\ArduinoBasic\PureMetalForge.exe',
-  [int]$LeaseMinutes = 5,
   [string]$Script = '',          # a tools/board.py script run against the board after the upload
   [int]$ScriptSeconds = 60,
   [string]$Jobs = '',
@@ -54,7 +55,8 @@ foreach ($job in $list) {
 }
 if ($CompileOnly) { exit 0 }
 . C:\PMFBuild\board-leases\lease.ps1
-$minutes = [Math]::Max($LeaseMinutes, ($list | ForEach-Object { $_.Seconds + $_.ScriptSeconds + 40 } | Measure-Object -Sum).Sum / 60)
+# the lease's length: each job's upload (about 30 s) and its read, plus a minute
+$minutes = 1 + ($list | ForEach-Object { 30 + $(if ($_.Script) { $_.ScriptSeconds } else { $_.Seconds }) } | Measure-Object -Sum).Sum / 60
 $l = Get-BoardLease -Port $Port -Owner 'apple2c' -Minutes ([int][Math]::Ceiling($minutes))
 $speakerLease = $null
 $worst = 0
@@ -64,13 +66,19 @@ try {
   foreach ($job in $list) {
     Write-Output "==== $($job.Source) ($(Get-Date -Format HH:mm:ss))"
     $log = "$($job.out).board.log"
-    $rc = Invoke-Pmf ('--compile "' + $job.src + '" -S -o "' + $job.out + '" --port ' + $Port + ' --seconds ' + $job.Seconds) $log
-    Get-Content $log | Where-Object { $_ -notmatch '^\[DEBUG\]|^> |TELEMETRY|_RP20|_RP23|^pmfc:' }
-    if ($rc -eq 0 -and $job.Script) {
-      $scriptPath = [IO.Path]::GetFullPath((Join-Path $root $job.Script))
+    $rc = Invoke-Pmf ('--compile --radio-firmware "' + $job.out + '" --port ' + $Port) $log
+    Get-Content $log | Where-Object { $_ -notmatch '^\[DEBUG\]|TELEMETRY|_RP20|_RP23' } | Select-Object -Last 8
+    if ($rc -eq 0) {
       Push-Location $root
-      try { & py -3 tools/board.py --port $Port --seconds $job.ScriptSeconds --script $scriptPath --output "$($job.out).script.log"; $rc = $LASTEXITCODE }
-      finally { Pop-Location }
+      try {
+        if ($job.Script) {
+          $scriptPath = [IO.Path]::GetFullPath((Join-Path $root $job.Script))
+          & py -3 tools/board.py --port $Port --seconds $job.ScriptSeconds --script $scriptPath --output "$($job.out).script.log"
+        } else {
+          & py -3 tools/board.py --port $Port --seconds $job.Seconds --output "$($job.out).serial.log"
+        }
+        $rc = $LASTEXITCODE
+      } finally { Pop-Location }
     }
     if ($rc -ne 0) { $worst = $rc; Write-Output "==== $($job.Source): exit $rc" }
   }

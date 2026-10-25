@@ -7,7 +7,7 @@ Reads the board's output for --seconds into --output, and runs an optional --scr
     line <text>               type text, then ENTER
     key <hex>                 send one key byte (1b = ESC, 08 = left arrow, 15 = right arrow)
     cmd <letter>              a monitor command: $1D then the letter (s status, t text, c capture, f full speed)
-    expect <seconds> <regex>  wait until the board's output matches, else FAIL
+    expect <seconds> <regex>  wait until the board's output since the last thing sent matches, else FAIL
     screen <seconds> <regex>  ask for the text on the screen (cmd t) until it matches, else FAIL
     capture <file.png>        ask for the rendered picture (cmd c) and save it as a PNG (480 x 320)
     # comment
@@ -33,16 +33,18 @@ p.add_argument('--key-gap', type=float, default=0.0, help='seconds between typed
 a = p.parse_args()
 
 start = time.monotonic()
+deadline = start + a.seconds  # a hard end: nothing reads past it (the lease's minutes cover it)
 out = a.output.open('wb')
 text = bytearray()          # everything received
 port = None
+mark = 0                    # where an expect starts looking: the output after the last thing sent
 
 
 def note(msg):
     print(f'board: {msg}', flush=True)
 
 
-def open_port(limit=10):
+def open_port(limit=20):
     global port
     t = time.monotonic()
     while True:
@@ -57,7 +59,7 @@ def open_port(limit=10):
 
 
 def pump(seconds):
-    end = time.monotonic() + seconds
+    end = min(time.monotonic() + seconds, deadline)
     while time.monotonic() < end:
         try:
             data = port.read(4096)
@@ -72,6 +74,8 @@ def pump(seconds):
 
 
 def send(data):
+    global mark
+    mark = len(text)       # an expect looks only at what the board says after this
     if a.key_gap > 0:
         for b in data:
             port.write(bytes([b]))
@@ -82,7 +86,7 @@ def send(data):
 
 def wait_for(pattern, seconds, since):
     rx = re.compile(pattern.encode())
-    end = time.monotonic() + seconds
+    end = min(time.monotonic() + seconds, deadline)
     while time.monotonic() < end:
         if rx.search(bytes(text[since:])):
             return True
@@ -114,7 +118,7 @@ def capture(path):
     m = re.search(rb'CAP_BEGIN w=480 h=320\r\n', bytes(text[since:]))
     body = since + m.end()
     need = 480 * 320 * 2
-    end = time.monotonic() + 30
+    end = min(time.monotonic() + 30, deadline)
     while len(text) - body < need and time.monotonic() < end:
         pump(0.1)
     if len(text) - body < need:
@@ -132,6 +136,10 @@ if a.script:
         if not line or line.startswith('#'):
             continue
         verb, _, rest = line.partition(' ')
+        if time.monotonic() >= deadline:
+            note(f'FAIL: the {a.seconds:g} s deadline passed before {line!r}')
+            failed = True
+            break
         note(line)
         if verb == 'wait':
             pump(float(rest))
@@ -146,13 +154,13 @@ if a.script:
             send(b'\x1d' + rest.strip()[:1].encode())
         elif verb == 'expect':
             secs, _, pattern = rest.partition(' ')
-            if not wait_for(pattern, float(secs), 0):
+            if not wait_for(pattern, float(secs), mark):
                 note(f'FAIL: no match for {pattern!r} within {secs} s')
                 failed = True
                 break
         elif verb == 'screen':
             secs, _, pattern = rest.partition(' ')
-            end = time.monotonic() + float(secs)
+            end = min(time.monotonic() + float(secs), deadline)
             ok = False
             while time.monotonic() < end and not ok:
                 since = len(text)
@@ -176,9 +184,8 @@ if a.script:
             note(f'FAIL: unknown script command {verb!r}')
             failed = True
             break
-remaining = a.seconds - (time.monotonic() - start)
-if remaining > 0 and not failed:
-    pump(remaining)
+if not a.script:
+    pump(a.seconds)        # no script: read for the time given
 out.close()
 log = a.output.read_bytes()
 sys.stdout.write(re.sub(rb'CAP_BEGIN.*?CAP_END', b'CAP_BEGIN ... CAP_END', log, flags=re.S).decode('latin-1')[-6000:])

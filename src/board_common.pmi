@@ -70,10 +70,6 @@ EndProcedure
 
 ; ---------------------------------------------------------------- the panel and core 1
 
-Procedure VideoSendRow(y.i, pixels.i)
-  Tft796BlitRect(0, y, #PANEL_W, 1, pixels)
-EndProcedure
-
 ; Core 0 asks core 1 to stop drawing (a capture over USB) and waits for it.
 Procedure A2ParkVideo(on.i)
   Protected t.i
@@ -95,11 +91,27 @@ ProcedureRAM Core1Park()
   PanelForce = 1
 EndProcedure
 
+; Core 1: one pass over the picture for every frame core 0 finishes (a frame it could not keep up with
+; is counted in PanelMissed), and the speaker between. Core1BusyUs is its time not spent waiting for one.
+Global Core1Seen.i, Core1BusyUs.i, Core1T.i, PanelMissed.i, Core1MaxUs.i, Core1MaxLines.i, Core1Lines.i
 Procedure Core1Main()
   WorkerReady = 1
+  Core1Seen = PeekL(@A2Frames)
   Repeat
-    If PeekL(@Core1ParkRequest) : Core1Park() : EndIf
-    PanelFrame()
+    If PeekL(@Core1ParkRequest) : Core1Park() : Core1Seen = PeekL(@A2Frames) : EndIf
+    Core1T = Micros()
+    If PeekL(@A2Frames) <> Core1Seen
+      If PeekL(@A2Frames) - Core1Seen > 1 : PanelMissed = PanelMissed + PeekL(@A2Frames) - Core1Seen - 1 : EndIf
+      Core1Seen = PeekL(@A2Frames)
+      Core1Lines = PanelLinesSent
+      PanelFrame()
+      Core1T = Micros() - Core1T
+      Core1BusyUs = Core1BusyUs + Core1T
+      If Core1T > Core1MaxUs : Core1MaxUs = Core1T : Core1MaxLines = PanelLinesSent - Core1Lines : EndIf
+    Else
+      A2AudioPoll()
+      If Micros() - Core1T > 2 : Core1BusyUs = Core1BusyUs + Micros() - Core1T : EndIf
+    EndIf
   ForEver
 EndProcedure
 
@@ -168,6 +180,7 @@ EndProcedure
 
 Global A2FullSpeed.i, A2Report.i = 1, A2Monitor.i, A2RunUs.i, A2Late.i, A2HoldApple.i
 Global A2StatFrames.i, A2StatCycles.i, A2StatAt.i, A2StatRun.i, A2StatPanel.i
+Global A2StatC1.i, A2StatMissed.i, A2StatLines.i, A2StatDraw.i, A2StatWait.i
 
 Procedure A2TextDump()
   Protected r.i, c.i, cols.i
@@ -187,8 +200,8 @@ Procedure A2Capture()
   A2ParkVideo(1)
   Say("CAP_BEGIN w=480 h=320") : Eol()
   For y = 0 To #PANEL_H - 1
-    VideoRenderLine((y * 3) / 5)
-    PanelMapLine()
+    PdC0 = 0 : PdC1 = 39
+    PanelDrawSpan((y * 3) / 5, @PanelOut(0), 1)
     For x = 0 To 479
       UsbSerialWrite(PanelOut(x) & 255) : UsbSerialWrite(PanelOut(x) >> 8)
     Next
@@ -196,6 +209,59 @@ Procedure A2Capture()
   Next
   Eol() : Say("CAP_END") : Eol()
   A2ParkVideo(0)
+EndProcedure
+
+; Monitor command x: every line of the picture now, whole and in spans, drawn as the panel draws it
+; (PanelDrawSpan: the direct pixels, or the assembly renderer and map) and as the shared renderer draws
+; it (VideoRenderSpan, then each pixel's dot through the map in PureMetal); prints how many pixels differ
+; (0 = the panel shows the renderer's picture) and how many lines of each mode it saw.
+Procedure.i PanelRenderCheck()
+  Protected line.i, c0.i, c1.i, x.i, bad.i, spans.i, ref.i, mapped.i, t.i, panelUs.i, refUs.i
+  Dim modes.i(6)
+  A2ParkVideo(1)
+  ; the time to draw the whole picture once each way (the panel's own drawing; the shared renderer and
+  ; the map in PureMetal): what the assembly and the direct pixels buy
+  PdC0 = 0 : PdC1 = 39
+  t = Micros()
+  For line = 0 To 191 : PanelDrawSpan(line, @PanelOut(0), 1) : Next
+  panelUs = Micros() - t
+  t = Micros()
+  For line = 0 To 191
+    VideoRenderSpan(line, 0, 39)
+    If VMode = #VM_TEXT40
+      For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap40(x))) : Next
+    Else
+      For x = 0 To 479 : PanelOut(x) = PanelPal(VDots(PanelMap80(x))) : Next
+    EndIf
+  Next
+  refUs = Micros() - t
+  For line = 0 To 191
+    modes(VideoLineMode(line)) = modes(VideoLineMode(line)) + 1
+    For c0 = 0 To 39 Step 3
+      For c1 = c0 To 39 Step 5
+        For x = 0 To 575 : VDots(x) = 99 : VBits(x) = (x * 7 + line) & 1 : Next
+        For x = 0 To 959 : PanelOut(x) = $5A5A : Next
+        PdC0 = c0 : PdC1 = c1
+        PanelDrawSpan(line, @PanelOut(0), 2)
+        VideoRenderSpan(line, c0, c1)
+        spans = spans + 1
+        For x = c0 * 12 To c1 * 12 + 11
+          If VMode = #VM_TEXT40 : mapped = PanelMap40(x) : Else : mapped = PanelMap80(x) : EndIf
+          ref = PanelPal(VDots(mapped))
+          If PanelOut(x - c0 * 12) <> ref : bad = bad + 1 : EndIf
+          If PanelOut(x - c0 * 12 + (c1 - c0 + 1) * 12) <> ref : bad = bad + 1 : EndIf
+        Next
+      Next
+    Next
+    A2AudioPoll()
+  Next
+  PanelForce = 1
+  A2ParkVideo(0)
+  Say("PANELCHECK lines text40=") : Num(modes(0)) : Say(" text80=") : Num(modes(1)) : Say(" lores=") : Num(modes(2))
+  Say(" dlores=") : Num(modes(3)) : Say(" hires=") : Num(modes(4)) : Say(" dhires=") : Num(modes(5)) : Say(" spans=")
+  Num(spans) : Say(" wrong_pixels=") : Num(bad)
+  Say(" screen_us panel=") : Num(panelUs) : Say(" reference=") : Num(refUs) : Eol()
+  ProcedureReturn bad
 EndProcedure
 
 Procedure A2CpuReport()
@@ -220,10 +286,17 @@ Procedure A2Status(now.i)
   Say(" fps_x100=") : Num((frames * 100000) / (dt / 1000))
   Say(" cpu_khz=") : Num(cycles / (dt / 1000))
   Say(" fast=") : Num(A2FullSpeed)
-  ; the share of wall time the emulation needed: under 100 it keeps up with a real IIc
-  Say(" busy_pct=") : Num((run / (dt / 1000)) / 10)
+  ; the share of wall time each core worked: core 0 the emulation (under 100 it keeps up with a real
+  ; IIc), core 1 the panel and the speaker (under 100 the panel shows every frame)
+  Say(" core0_busy_pct=") : Num((run / (dt / 1000)) / 10)
+  Say(" core1_busy_pct=") : Num(((Core1BusyUs - A2StatC1) / (dt / 1000)) / 10)
   Say(" pc=$") : Hex4(CpuPC)
   Say(" panel_fps_x10=") : Num(((PanelFrames - A2StatPanel) * 10000) / (dt / 1000))
+  Say(" panel_missed=") : Num(PanelMissed - A2StatMissed)
+  Say(" lines_sent=") : Num(PanelLinesSent - A2StatLines)
+  Say(" pass_max_us=") : Num(Core1MaxUs) : Say(" pass_max_lines=") : Num(Core1MaxLines)
+  Say(" draw_pct=") : Num(((PanelDrawUs - A2StatDraw) / (dt / 1000)) / 10)
+  Say(" spi_wait_pct=") : Num(((PanelSpiWaitUs - A2StatWait) / (dt / 1000)) / 10)
   Say(" rows_sent=") : Num(PanelRowsSent)
   Say(" keys=") : Num(A2KeyTyped) : Say(" queued=") : Num(A2KeyPending())
   Say(" disk_reads=") : Num(DiskReads) : Say(" disk_writes=") : Num(DiskWrites) : Say(" track=") : Num(DiskHalf(1) >> 1)
@@ -232,6 +305,9 @@ Procedure A2Status(now.i)
   Eol()
   A2StatAt = now : A2StatFrames = A2Frames : A2StatCycles = CpuCycles
   A2StatRun = A2RunUs : A2StatPanel = PanelFrames
+  A2StatC1 = Core1BusyUs : A2StatMissed = PanelMissed : A2StatLines = PanelLinesSent
+  A2StatDraw = PanelDrawUs : A2StatWait = PanelSpiWaitUs
+  Core1MaxUs = 0 : Core1MaxLines = 0
 EndProcedure
 
 Procedure A2MonitorCommand(c.i)
@@ -239,6 +315,7 @@ Procedure A2MonitorCommand(c.i)
     Case 115 : A2Status(Micros())   ; s
     Case 116 : A2TextDump()   ; t
     Case 99 : A2Capture()   ; c
+    Case 120 : PanelRenderCheck()   ; x
     Case 112 : A2CpuReport()   ; p
     Case 102   ; f
       A2FullSpeed = A2FullSpeed ! 1

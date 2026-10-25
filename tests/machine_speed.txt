@@ -1,0 +1,11 @@
+# The whole machine unthrottled (monitor f) while the test disk is read: the second status line
+# covers 5 s of full speed (cpu_khz), with the panel drawing on core 1.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+cmd f
+type D
+wait 3
+cmd s
+wait 5
+cmd s
+cmd f

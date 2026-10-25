@@ -11,6 +11,8 @@ XIncludeFile "RP2350/Lib/safety.pico2"
 XIncludeFile "RP2350/Lib/spi.pico2"
 XIncludeFile "RP2350/Lib/st7796.pico2"
 #SOUND_RING = 4096                       ; the speaker ring, samples (85 ms)
+#PANEL_DMA_TREQ_SHIFT = #SPI_DMA_TREQ_SHIFT   ; where DMA CTRL takes TREQ_SEL (17 on the RP2350)
+#A2_THUMB2 = 1                           ; the M33: the panel's hot loops in Thumb-2 (video_panel.pmi)
 XIncludeFile "../src/cpu65c02.pmi"
 XIncludeFile "../src/machine.pmi"
 XIncludeFile "../src/sound.pmi"

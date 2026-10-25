@@ -1,0 +1,37 @@
+# What the panel draws (PanelDrawSpan: direct pixels, or the assembly renderer and map) against the shared
+# renderer (VideoRenderSpan through the map), every line in spans (monitor command x), in each mode.
+wait 2
+screen 10 SOFT SWITCH TESTS: ALL PASS
+cmd x
+expect 90 PANELCHECK .* text40=[1-9].* wrong_pixels=0
+type 2
+wait 4
+cmd x
+expect 90 PANELCHECK .* text80=[1-9].* wrong_pixels=0
+type 3
+wait 4
+cmd x
+expect 90 PANELCHECK .* lores=[1-9].* wrong_pixels=0
+type 4
+wait 4
+cmd x
+expect 90 PANELCHECK .* hires=[1-9].* wrong_pixels=0
+type 5
+wait 4
+cmd x
+expect 90 PANELCHECK .* dhires=[1-9].* wrong_pixels=0
+type 6
+wait 4
+cmd x
+expect 90 PANELCHECK .* hires=[1-9].* wrong_pixels=0
+type 7
+wait 10
+cmd p
+expect 20 SWITCHES text=0 .*hires=0 dhires=1 col80=1
+cmd x
+expect 90 PANELCHECK .* dlores=[1-9].* wrong_pixels=0
+type D
+screen 20 APPLE IIC  DEMO
+wait 3
+cmd x
+expect 90 PANELCHECK .* lores=[1-9].* wrong_pixels=0
