@@ -120,6 +120,7 @@ click a line to break there, the stack), Switches, Memory (as the CPU sees it, m
 | The panel's drawing of a whole screen: assembly or direct pixels / the shared renderer and the map in PureMetal | Pico 2 W hi-res 12.8 / 68.3 ms, double hi-res 12.8 / 76.1, 40-column text 11.1 / 38.9, lo-res 7.1 / 36.8; Pico W hi-res 14.1 / 66.8, double hi-res 14.1 / 74.6, text 10.4 / 35.9, lo-res 6.7 / 46.6 |
 | Pico 2 W, the 65C02 operand fetch in Thumb-2 (2026-10-25, compiler 341fd5aca; the same handlers before / after) | Klaus 65C02 7465 / 8381 kHz (+12.3%), 6502 functional 6680 / 7393 kHz (+10.7%), the same cycle counts, 3072/3072 vectors |
 | Pico W, whole machine unthrottled (the test disk), before / after the panel rework | 4.62-5.77 MHz / 4.63-5.81 MHz; the CPU check images are byte-identical on both chips |
+| Pico 2 W, whole machine unthrottled (the test disk, `tests/machine_speed.txt`), before / after the operand fetch and the panel rework | 3.78-5.98 MHz / 4.21-6.33 MHz (the peak +6%); the demo paced: core 0 13% / 11% busy |
 | Desktop, 65C02 core alone (6502 functional test, 30,646,176 instructions) | 175 M instructions/s (C computed goto), 172 M through a procedure table |
 | Desktop, whole machine paced | 60.0 frames/s, 1.02 MHz |
 
