@@ -207,21 +207,33 @@ Generated sources, all reproducible: `tools/gen_cpu.py` (the 65C02 core for both
 
 ## The desktop version
 
-Clone the [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine) beside this
-repository, then build with PureBasic 6 (C back end, x64) from PowerShell:
+### Building the desktop version
+
+You need PureBasic 6.41 (x64, C back end) on Windows. The window is drawn by the
+[Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): clone it beside this
+repository (the two folders side by side), from PowerShell:
 
 ```
+git clone https://github.com/ajtaji/AppleIIcEmulatorPicoSeries.git
+git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+cd AppleIIcEmulatorPicoSeries
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\apple2c_desktop.pb /EXE desktop\PureMetalAppleIIc.exe /THREAD /DPIAWARE /OPTIMIZER
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\apple2c_check.pb /CONSOLE /OPTIMIZER /EXE desktop\apple2c_check.exe
 & "C:\Program Files\PureBasic\Compilers\pbcompilerc.exe" desktop\cpu_check.pb /CONSOLE /OPTIMIZER /EXE desktop\apple2c_cpu_check.exe
 ```
 
-(An engine elsewhere: add `/CONSTANT GL_ENGINE_DIR$=<path>/`; the trailing slash matters.)
+The program finds the engine at `../Neon-Arcade-Dispay-Engine/` beside the repository. With the engine
+somewhere else, add `/CONSTANT GL_ENGINE_DIR$=<path to the engine>/` to the first command (the trailing slash
+matters). `apple2c_check.exe` and `apple2c_cpu_check.exe` do not use the engine.
+
+### Running it
 
 ```
 desktop\PureMetalAppleIIc.exe --disk1 demo\apple2c_demo.dsk --type D
 desktop\PureMetalAppleIIc.exe --rom <your IIc ROM> --disk1 <a disk image>
 ```
+
+The first runs this project's test ROM and boots the PureMetal demo; the second your own IIc ROM and disk.
 
 Options: `--rom file`, `--disk1 file`, `--disk2 file`, `--mono`, `--mute`, `--type TEXT` (typed after start),
 `--shot file.png --seconds N` (saves the window and closes). Without `--rom` the test ROM runs.
