@@ -303,6 +303,28 @@ EndProcedure
 
 Declare ViewRunTests()
 
+; The Controls tab: the controls table (controls.pbi), the same rows the keyboard code reads.
+Global ViewControlsTop.i
+Procedure ViewControls(x.f, y.f, w.f, h.f)
+  Protected head$, kind.i, last.i = -1, c$
+  Neon_Panel(x, y, w, h, "Controls", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
+  y + Neon_S(32) : x + Neon_S(10)
+  Neon_Text(*Neon_FontSmall, x, y, "PC key  ->  the Apple IIc. Esc is the IIc's ESC in the window; in full screen it leaves full screen, and End is ESC.", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
+  y + Neon_S(26)
+  Neon_ListBegin(9, x, y, w - Neon_S(20), h - Neon_S(70), Neon_S(22), @ViewControlsTop)
+  ForEach Controls()
+    Select Controls()\kind
+      Case #CTL_SHORTCUT : kind = 2 : head$ = "The window"
+      Default
+        If FindString(Controls()\pc$, "Joystick") : kind = 1 : head$ = "Joystick" : Else : kind = 0 : head$ = "Apple IIc keyboard" : EndIf
+    EndSelect
+    If kind <> last : Neon_ListItem(head$, 0, #False, #True) : last = kind : EndIf
+    c$ = Controls()\pc$ + "   ->   " + Controls()\a2$
+    Neon_ListItem(c$, 1)
+  Next
+  Neon_ListEnd()
+EndProcedure
+
 Procedure ViewTests(x.f, y.f, w.f, h.f)
   Protected i.i
   Neon_Panel(x, y, w, h, "Tests", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)

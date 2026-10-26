@@ -32,6 +32,7 @@ CompilerIf Defined(PLANT_CRT, #PB_Constant)
   UI_UseCRT = #True   ; only to see --pointer-test fail
 CompilerEndIf
 XIncludeFile "audio.pbi"
+XIncludeFile "controls.pbi"
 XIncludeFile "cpu_tests.pbi"
 XIncludeFile "view.pbi"
 
@@ -106,7 +107,7 @@ Global PtFile$, PtX.f, PtY.f, PtDown.i, PtCase.i, PtPoint.i, PtFrame.i, PtFails.
 Global PtLog$, PtCount.i, Dim PtName$(48)
 
 Procedure PtInit()
-  Protected n$ = "ROM|Disk 1|Pause|Step|Frame|Ctrl+Reset|Power|Fast|Mono|Mute|tab 0|tab 1|tab 2|tab 3|tab 4|" +
+  Protected n$ = "ROM|Disk 1|Pause|Step|Frame|Ctrl+Reset|Power|Fast|Mono|Mute|Full screen|tab 0|tab 1|tab 2|tab 3|tab 4|tab 5|" +
                  "mem cpu|mem main|mem aux|mem back|mem next|mem zp|mem text|mem hires|mem PC|" +
                  "insert 1|eject 1|save 1|insert 2|eject 2|save 2|run tests|dis first row|dis last row"
   Protected i.i
@@ -293,25 +294,80 @@ EndProcedure
 
 ; The Apple's keys from the PC's: Return, the arrows, Esc, Tab, Delete and Ctrl+letter come from KeyDown,
 ; printable characters from Input.
-Procedure AppleKeyDown(k.i)
-  Protected ctrl.i
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-    ctrl = Bool(GetAsyncKeyState_(#VK_CONTROL) & $8000)
-  CompilerEndIf
-  Select k
-    Case #PB_Shortcut_Return : A2KeyPut($0D)
-    Case #PB_Shortcut_Back, #PB_Shortcut_Left : A2KeyPut($08)
-    Case #PB_Shortcut_Right : A2KeyPut($15)
-    Case #PB_Shortcut_Up : A2KeyPut($0B)
-    Case #PB_Shortcut_Down : A2KeyPut($0A)
-    Case #PB_Shortcut_Escape : A2KeyPut($1B)
-    Case #PB_Shortcut_Tab : A2KeyPut($09)
-    Case #PB_Shortcut_Delete : A2KeyPut($7F)
-    Default
-      If ctrl And k >= #PB_Shortcut_A And k <= #PB_Shortcut_Z
-        A2KeyPut(k - #PB_Shortcut_A + 1)
-      EndIf
+; ---------------------------------------------------------------- full screen
+; The Full screen button or F11: a borderless window over the monitor the window is on (no display-mode
+; change) showing only the IIc's picture at 4:3, as large as fits and centred, black around it. Emulation,
+; sound and the frame rate are the window's. Esc leaves (and is not the IIc's ESC there: End is), and the
+; window comes back exactly as it was. The pointer hides after two idle seconds.
+Global FullScreen.i, FsStyle.i, FsPlacement.WINDOWPLACEMENT, FsCursorHidden.i, FsMouseX.i, FsMouseY.i, FsMouseMs.q
+Global FsViewX.f, FsViewY.f, FsViewW.f, FsViewH.f
+#FS_ASPECT = 4.0 / 3.0
+
+Procedure FsShowCursor(show.i)
+  If show And FsCursorHidden : ShowCursor_(#True) : FsCursorHidden = 0 : EndIf
+  If show = 0 And FsCursorHidden = 0 : ShowCursor_(#False) : FsCursorHidden = 1 : EndIf
+EndProcedure
+
+Procedure EnterFullScreen()
+  Protected hwnd.i = WindowID(Win), mi.MONITORINFO
+  If FullScreen : ProcedureReturn : EndIf
+  FsPlacement\length = SizeOf(WINDOWPLACEMENT) : GetWindowPlacement_(hwnd, @FsPlacement)
+  FsStyle = GetWindowLongPtr_(hwnd, #GWL_STYLE)
+  mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)   ; 2: the nearest monitor
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle & ~(#WS_CAPTION | #WS_THICKFRAME | #WS_MINIMIZEBOX | #WS_MAXIMIZEBOX | #WS_SYSMENU))
+  SetWindowPos_(hwnd, #HWND_TOP, mi\rcMonitor\left, mi\rcMonitor\top, mi\rcMonitor\right - mi\rcMonitor\left, mi\rcMonitor\bottom - mi\rcMonitor\top, #SWP_FRAMECHANGED | #SWP_NOOWNERZORDER | #SWP_SHOWWINDOW)
+  FullScreen = 1 : FsMouseMs = ElapsedMilliseconds()
+  MeasureWindow()
+EndProcedure
+
+Procedure LeaveFullScreen()
+  Protected hwnd.i = WindowID(Win)
+  If FullScreen = 0 : ProcedureReturn : EndIf
+  SetWindowLongPtr_(hwnd, #GWL_STYLE, FsStyle)
+  SetWindowPlacement_(hwnd, @FsPlacement)
+  SetWindowPos_(hwnd, 0, 0, 0, 0, 0, #SWP_FRAMECHANGED | #SWP_NOMOVE | #SWP_NOSIZE | #SWP_NOZORDER | #SWP_NOOWNERZORDER)
+  FullScreen = 0 : FsShowCursor(1)
+  MeasureWindow()
+EndProcedure
+
+Procedure DrawFullScreen(pw.f, ph.f)
+  Protected vw.f, vh.f, mx.i, my.i
+  vw = pw : vh = vw / #FS_ASPECT
+  If vh > ph : vh = ph : vw = vh * #FS_ASPECT : EndIf
+  vw = Round(vw, #PB_Round_Nearest) : vh = Round(vh, #PB_Round_Nearest)
+  FsViewW = vw : FsViewH = vh : FsViewX = Round((pw - vw) / 2, #PB_Round_Down) : FsViewY = Round((ph - vh) / 2, #PB_Round_Down)
+  Neon_Box(0, 0, pw, ph, 0, 0, 0)
+  ViewDrawScreen(FsViewX, FsViewY, FsViewW, FsViewH)
+  ; the pointer hides after two seconds without moving, and shows again when it moves
+  mx = WindowMouseX(Win) : my = WindowMouseY(Win)
+  If mx <> FsMouseX Or my <> FsMouseY : FsMouseX = mx : FsMouseY = my : FsMouseMs = ElapsedMilliseconds() : FsShowCursor(1) : EndIf
+  If ElapsedMilliseconds() - FsMouseMs > 2000 : FsShowCursor(0) : EndIf
+EndProcedure
+
+; The window's own keys, from the controls table (controls.pbi).
+Procedure WindowAction(act.i)
+  Select act
+    Case #ACT_RUNPAUSE : Paused = 1 - Paused : EmuLastUs = HostUs() : BreakHit = 0
+    Case #ACT_STEP : StepInstruction()
+    Case #ACT_FRAME : StepFrame()
+    Case #ACT_FULLSPEED : FullSpeed = 1 - FullSpeed
+    Case #ACT_FULLSCREEN : If FullScreen : LeaveFullScreen() : Else : EnterFullScreen() : EndIf
+    Case #ACT_LEAVEFULL : LeaveFullScreen()
+    Case #ACT_RESET : A2WarmReset() : Paused = 0
+    Case #ACT_POWER : PowerOn() : Paused = 0
   EndSelect
+EndProcedure
+
+; A key: the window's own if the table has it there, else the IIc's (the table, then Ctrl + a letter).
+Procedure KeyDown(k.i)
+  Protected mods.i, act.i, code.i
+  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+    mods = Bool(GetAsyncKeyState_(#VK_CONTROL) & $8000) | (Bool(GetAsyncKeyState_(#VK_MENU) & $8000) << 1)
+  CompilerEndIf
+  act = ControlsAction(k, mods, FullScreen)
+  If act : WindowAction(act) : ProcedureReturn : EndIf
+  code = ControlsKey(k, mods & 1, FullScreen)
+  If code >= 0 : A2KeyPut(code) : EndIf
 EndProcedure
 
 Procedure SaveWindowShot(file$)
@@ -331,6 +387,85 @@ Procedure SaveWindowShot(file$)
   FreeImage(img) : FreeMemory(*buf)
 EndProcedure
 
+; ---------------------------------------------------------------- --fullscreen-test
+; Full screen by its own keys, no real pointer or keyboard: F11, Esc and End are posted to the window's GL
+; gadget (as the keyboard would send them). Checked: Esc in the window is the IIc's ESC and leaves the window
+; alone; F11 covers the window's monitor, the picture is 4:3, as large as fits and centred, the machine runs on
+; at 59.92 frames a second, the scale is measured again; End is ESC there and Esc is not - it leaves, and the
+; window's rectangle and style come back exactly; Esc is ESC again in the window.
+Global FtOn.i, FtFile$, FtShot$, FtStep.i, FtWait.i, FtFails.i, FtLog$, FtRect.RECT, FtStyle.i, FtFrame.i, FtMs.q, FtTyped.i
+
+Procedure FtCheck(ok.i, what$)
+  If ok = 0 : FtFails + 1 : FtLog$ + "FAIL " : Else : FtLog$ + "ok   " : EndIf
+  FtLog$ + what$ + #LF$
+EndProcedure
+Procedure FtKey(vk.i)
+  FtTyped = A2KeyTyped
+  PostMessage_(GadgetID(Gl), #WM_KEYDOWN, vk, 0) : PostMessage_(GadgetID(Gl), #WM_KEYUP, vk, 0)
+EndProcedure
+; Did the last posted key reach the IIc as ESC?
+Procedure.i FtGotEsc()
+  ProcedureReturn Bool(A2KeyTyped > FtTyped And (A2Key & $7F) = $1B)
+EndProcedure
+
+Procedure FtFull()
+  Protected r.RECT, mi.MONITORINFO, hwnd.i = WindowID(Win)
+  GetWindowRect_(hwnd, @r) : mi\cbSize = SizeOf(MONITORINFO) : GetMonitorInfo_(MonitorFromWindow_(hwnd, 2), @mi)
+  FtCheck(FullScreen, "F11 entered full screen")
+  FtCheck(Bool(r\left = mi\rcMonitor\left And r\top = mi\rcMonitor\top And r\right = mi\rcMonitor\right And r\bottom = mi\rcMonitor\bottom),
+          "the window covers its monitor (" + Str(r\left) + "," + Str(r\top) + " - " + Str(r\right) + "," + Str(r\bottom) + "; monitor " +
+          Str(mi\rcMonitor\left) + "," + Str(mi\rcMonitor\top) + " - " + Str(mi\rcMonitor\right) + "," + Str(mi\rcMonitor\bottom) + ")")
+  FtCheck(Bool(Abs(FsViewW / FsViewH - #FS_ASPECT) < 0.005), "the picture " + StrF(FsViewW, 0) + "x" + StrF(FsViewH, 0) + " is 4:3 (" + StrF(FsViewW / FsViewH, 4) + ")")
+  FtCheck(Bool(FsViewW <= PhysW And FsViewH <= PhysH And (Abs(FsViewW - PhysW) <= 1 Or Abs(FsViewH - PhysH) <= 1)), "as large as fits in " + Str(PhysW) + "x" + Str(PhysH))
+  FtCheck(Bool(Abs(FsViewX * 2 + FsViewW - PhysW) <= 1 And Abs(FsViewY * 2 + FsViewH - PhysH) <= 1), "centred at " + StrF(FsViewX, 0) + "," + StrF(FsViewY, 0))
+  FtCheck(Bool(Abs(Neon_UIScale - PhysW / Util_WinWidth) < 0.01), "the scale measured again: " + StrF(Neon_UIScale, 3))
+EndProcedure
+
+; One step, after each frame is drawn.
+Procedure FtStep()
+  Protected f.i, r.RECT, rate.f
+  FtWait + 1
+  If FtWait < 20 : ProcedureReturn : EndIf   ; frames for each step to settle
+  If FtStep = 3 And ElapsedMilliseconds() - FtMs < 1000 : ProcedureReturn : EndIf   ; a second of full screen
+  FtWait = 0 : FtStep + 1
+  Select FtStep
+    Case 1
+      GetWindowRect_(WindowID(Win), @FtRect) : FtStyle = GetWindowLongPtr_(WindowID(Win), #GWL_STYLE)
+      FtKey(#VK_ESCAPE)
+    Case 2
+      FtCheck(FtGotEsc(), "Esc in the window is the IIc's ESC")
+      FtCheck(Bool(FullScreen = 0), "Esc in the window leaves the window as it is")
+      FtKey(#VK_F11)
+    Case 3
+      FtFrame = A2Frames : FtMs = ElapsedMilliseconds()
+    Case 4
+      FtFull()
+      rate = (A2Frames - FtFrame) * 1000.0 / (ElapsedMilliseconds() - FtMs)
+      FtCheck(Bool(Abs(rate - 59.92) < 3), "the machine runs on at its own rate in full screen (" + StrF(rate, 1) + " frames a second, 59.92 wanted)")
+      If FtShot$ : SaveWindowShot(FtShot$) : EndIf
+      FtKey(#VK_END)
+    Case 5
+      FtCheck(FtGotEsc(), "End is the IIc's ESC in full screen")
+      FtCheck(FullScreen, "End leaves full screen alone")
+      FtKey(#VK_ESCAPE)
+    Case 6
+      GetWindowRect_(WindowID(Win), @r)
+      FtCheck(Bool(FtGotEsc() = 0), "Esc in full screen is not the IIc's ESC")
+      FtCheck(Bool(FullScreen = 0), "Esc left full screen")
+      FtCheck(Bool(r\left = FtRect\left And r\top = FtRect\top And r\right = FtRect\right And r\bottom = FtRect\bottom),
+              "the window's rectangle is back (" + Str(r\left) + "," + Str(r\top) + " - " + Str(r\right) + "," + Str(r\bottom) + ")")
+      FtCheck(Bool(GetWindowLongPtr_(WindowID(Win), #GWL_STYLE) = FtStyle), "the window's style is back")
+      FtCheck(Bool(Abs(Neon_UIScale - PhysW / Util_WinWidth) < 0.01 And Util_WinWidth = WindowWidth(Win, #PB_Window_InnerCoordinate)), "the scale and size measured again: " + StrF(Neon_UIScale, 3) + ", " + Str(Util_WinWidth) + "x" + Str(Util_WinHeight) + " logical")
+      FtKey(#VK_ESCAPE)
+    Case 7
+      FtCheck(FtGotEsc(), "Esc is the IIc's ESC in the window again")
+      FtLog$ + "fullscreen-test: " + Str(FtFails) + " failures" + #LF$
+      f = CreateFile(#PB_Any, FtFile$)
+      If f : WriteString(f, FtLog$) : CloseFile(f) : EndIf
+      Quit = 1
+  EndSelect
+EndProcedure
+
 ; ---------------------------------------------------------------- one frame of the window
 Procedure Tick()
   Protected now.q, dt.f, mx.i, my.i, down.b, toolH.f, x.f, gx.f, gy.f, gw.f, gh.f, scale.f, side.f
@@ -339,8 +474,12 @@ Procedure Tick()
   If dt > 0.25 : dt = 0.25 : EndIf
   CompilerIf #PB_Compiler_OS = #PB_OS_Windows
     If GetActiveWindow() = Win
-      A2OpenApple = Bool(GetAsyncKeyState_(#VK_LMENU) & $8000)
-      A2SolidApple = Bool(GetAsyncKeyState_(#VK_RMENU) & $8000)
+      ForEach Controls()
+        If Controls()\kind = #CTL_APPLE
+          If Controls()\value = 1 : A2OpenApple = Bool(GetAsyncKeyState_(Controls()\vk) & $8000) : EndIf
+          If Controls()\value = 2 : A2SolidApple = Bool(GetAsyncKeyState_(Controls()\vk) & $8000) : EndIf
+        EndIf
+      Next
     EndIf
   CompilerEndIf
   Protected tEmu.q = HostUs()
@@ -375,6 +514,16 @@ Procedure Tick()
   glClear_(#GL_COLOR_BUFFER_BIT)
   glEnable_(#GL_BLEND) : glBlendFunc_(#GL_SRC_ALPHA, #GL_ONE_MINUS_SRC_ALPHA)
 
+  If FullScreen
+    DrawFullScreen(PhysW, PhysH)
+    Neon_ChromeEndFrame()
+    If ShotFile$ <> "" And now >= ShotAtMs : SaveWindowShot(ShotFile$) : Quit = 1 : EndIf
+    SetGadgetAttribute(Gl, #PB_OpenGL_FlipBuffers, #True)
+    TickUsSum + HostUs() - tEmu : TickCount + 1
+    If FtOn : FtStep() : EndIf
+    ProcedureReturn
+  EndIf
+
   toolH = Round(Neon_S(40), #PB_Round_Nearest)
   Neon_Box(0, 0, PhysW, toolH, Neon_C_HeadR, Neon_C_HeadG, Neon_C_HeadB)
   x = Neon_S(8)
@@ -391,6 +540,7 @@ Procedure Tick()
   If Btn("Mono", x, Neon_S(6), Neon_S(70), toolH - Neon_S(12), label$, VMono) : VMono = 1 - VMono : MachineForce = 1 : EndIf : x + Neon_S(76)
   label$ = "Mute" : If WoMuted : label$ = "Sound" : EndIf
   If Btn("Mute", x, Neon_S(6), Neon_S(64), toolH - Neon_S(12), label$, WoMuted) : WoMuted = 1 - WoMuted : EndIf : x + Neon_S(70)
+  If Btn("Full screen", x, Neon_S(6), Neon_S(124), toolH - Neon_S(12), "Full screen  F11") : WindowAction(#ACT_FULLSCREEN) : EndIf : x + Neon_S(130)
   Neon_Text(*Neon_FontMono, x + Neon_S(8), toolH / 2 - Neon_S(8), StrD(FpsShown, 1) + " fps  " + StrD(MhzShown, 2) + " MHz (" + Str(MhzShown * 100 / 1.020484) + "% of a IIc)  window " + StrD(TickMsShown, 1) + " ms, machine " + StrD(EmuMsShown, 1) + " ms   " + StatusLine$, Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
 
   ; the screen: 560 x 384 at the largest size that fits beside the panel
@@ -403,13 +553,14 @@ Procedure Tick()
   If BreakHit : Neon_Text(*Neon_FontBold, gx + Neon_S(8), gy + Neon_S(8), "BREAKPOINT $" + Hex4(BreakAt) + " reached (F5 runs on)", Neon_C_RedR, Neon_C_RedG, Neon_C_RedB) : EndIf
 
   panelX = PhysW - side - Neon_S(6)
-  ActiveTab = Neon_TabStrip(1, panelX, toolH + Neon_S(6), side, Neon_S(30), "CPU|Switches|Memory|Disk|Tests", ActiveTab)
+  ActiveTab = Neon_TabStrip(1, panelX, toolH + Neon_S(6), side, Neon_S(30), "CPU|Switches|Memory|Disk|Tests|Controls", ActiveTab)
   Select ActiveTab
     Case 0 : ViewCpu(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
     Case 1 : ViewSwitches(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
     Case 2 : ViewMemory(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
     Case 3 : ViewDisk(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
     Case 4 : ViewTests(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
+    Case 5 : ViewControls(panelX, toolH + Neon_S(40), side, PhysH - toolH - Neon_S(46))
   EndSelect
 
   Neon_ChromeEndFrame()
@@ -417,6 +568,7 @@ Procedure Tick()
   If ShotFile$ <> "" And now >= ShotAtMs : SaveWindowShot(ShotFile$) : Quit = 1 : EndIf
   SetGadgetAttribute(Gl, #PB_OpenGL_FlipBuffers, #True)
   TickUsSum + HostUs() - tEmu : TickCount + 1
+  If FtOn : FtStep() : EndIf
 EndProcedure
 
 ; ---------------------------------------------------------------- main
@@ -437,12 +589,18 @@ Procedure Main()
       Case "--shot" : k + 1 : ShotFile$ = ProgramParameter(k) : If ShotAtMs = 0 : ShotAtMs = 5000 : EndIf
       Case "--seconds" : k + 1 : ShotAtMs = Val(ProgramParameter(k)) * 1000
       Case "--pointer-test" : k + 1 : PtFile$ = ProgramParameter(k) : PtOn = 1 : noSound = 1
+      Case "--fullscreen-test"
+        k + 1 : FtFile$ = ProgramParameter(k) : FtOn = 1 : noSound = 1
+        If k + 1 < CountProgramParameters() And Left(ProgramParameter(k + 1), 2) <> "--" : k + 1 : FtShot$ = ProgramParameter(k) : EndIf
     EndSelect
   Next
   If PtOn : PtInit() : k = 460 : Else : k = 820 : EndIf
   Gl = OpenGLWindow("PureMetal Apple IIc", 1400, k, #PB_Window_SystemMenu | #PB_Window_ScreenCentered | #PB_Window_SizeGadget | #PB_Window_MinimizeGadget | #PB_Window_MaximizeGadget)
   If Gl = 0 : MessageRequester("PureMetal Apple IIc", "OpenGL could not be started.") : End 1 : EndIf
   Win = Util_MainWindowID
+  ; the engine binds Esc to a shortcut of its own; here the controls table says what Esc is
+  RemoveKeyboardShortcut(Win, #PB_Shortcut_Escape)
+  ControlsInit()
   MeasureWindow()                        ; sets Neon_UIScale and builds the fonts
   GL_SetVSync(1)
   DisInit()
@@ -468,34 +626,13 @@ Procedure Main()
       ev = WindowEvent()
       Select ev
         Case #PB_Event_CloseWindow : Quit = 1
-        Case #PB_Event_SizeWindow, #PB_Event_MaximizeWindow, #PB_Event_RestoreWindow : MeasureWindow()
-        Case #PB_Event_Menu
-          If EventMenu() = 1001 : A2KeyPut($1B) : EndIf          ; the engine's Escape shortcut
+        Case #PB_Event_SizeWindow, #PB_Event_MaximizeWindow, #PB_Event_RestoreWindow, #PB_Event_MoveWindow : MeasureWindow()
         Case #PB_Event_Gadget
           If EventGadget() = Gl
             et = EventType()
             Select et
               Case #PB_EventType_KeyDown
-                k = GetGadgetAttribute(Gl, #PB_OpenGL_Key)
-                Select k
-                  Case #PB_Shortcut_F5 : Paused = 1 - Paused : EmuLastUs = HostUs() : BreakHit = 0
-                  Case #PB_Shortcut_F6 : StepInstruction()
-                  Case #PB_Shortcut_F7 : StepFrame()
-                  Case #PB_Shortcut_F9 : FullSpeed = 1 - FullSpeed
-                  Case #PB_Shortcut_F11 : GL_ToggleFullscreen() : MeasureWindow()
-                  Case #PB_Shortcut_F12
-                    CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-                      If GetAsyncKeyState_(#VK_CONTROL) & $8000
-                        If GetAsyncKeyState_(#VK_MENU) & $8000
-                          PowerOn()
-                        Else
-                          A2WarmReset()
-                        EndIf
-                        Paused = 0
-                      EndIf
-                    CompilerEndIf
-                  Default : AppleKeyDown(k)
-                EndSelect
+                KeyDown(GetGadgetAttribute(Gl, #PB_OpenGL_Key))
               Case #PB_EventType_Input
                 k = GetGadgetAttribute(Gl, #PB_OpenGL_Input)
                 If k >= 32 And k < 127 : A2KeyPut(k) : EndIf
@@ -510,5 +647,6 @@ Procedure Main()
   For i = 1 To 2 : HostEjectDisk(i) : Next
   WoEnd()
   If PtOn : End PtFails : EndIf   ; --pointer-test: the number of failures
+  If FtOn : End FtFails : EndIf   ; --fullscreen-test: the number of failures
 EndProcedure
 Main()
