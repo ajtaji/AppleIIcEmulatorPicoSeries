@@ -9,7 +9,25 @@ Structure ViewTexture
   *pixels
 EndStructure
 
-Global UiScale.f = 1.0
+; (authored sizes go through the engine's Neon_S(): Neon_UIScale is set by MeasureWindow)
+
+; Every control the pointer can press, by name, where it was last drawn (canvas units, physical pixels):
+; --pointer-test (apple2c_desktop.pb) aims at them. In that test a press records the control's name and does
+; nothing else.
+Global PtOn.i, PtClicked$
+Structure CtlRect : x.f : y.f : w.f : h.f : EndStructure
+Global NewMap Ctl.CtlRect()
+Procedure CtlSet(name$, x.f, y.f, w.f, h.f)
+  Ctl(name$)\x = x : Ctl()\y = y : Ctl()\w = w : Ctl()\h = h
+EndProcedure
+Procedure.b Btn(name$, x.f, y.f, w.f, h.f, label.s, lit.b = #False)
+  CtlSet(name$, x, y, w, h)
+  If Neon_Button(x, y, w, h, label, lit)
+    If PtOn : PtClicked$ = name$ : ProcedureReturn #False : EndIf
+    ProcedureReturn #True
+  EndIf
+  ProcedureReturn #False
+EndProcedure
 Global ViewScreen.ViewTexture
 Global ViewMemPage.i, ViewMemBank.i            ; bank 0 the CPU's view, 1 main, 2 auxiliary
 Global ViewTestResult$, ViewTestFailed.i
@@ -140,14 +158,14 @@ Procedure.s ViewOnOff(v.i)
 EndProcedure
 
 Procedure ViewCpu(x.f, y.f, w.f, h.f)
-  Protected p.i, i.i, a.i, row$, lh.f, s.f = UiScale, line$, mx.i, my.i
+  Protected p.i, i.i, a.i, row$, lh.f, line$, mx.i, my.i
   lh = GLFontLineHeight(*Neon_FontMono)
   p = CpuStatus()
   For i = 0 To 7
     If p & (128 >> i) : row$ + Mid("NV-BDIZC", i + 1, 1) : Else : row$ + "." : EndIf
   Next
   Neon_Panel(x, y, w, h, "65C02", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  y + 34 * s : x + 12 * s
+  y + Neon_S(34) : x + Neon_S(12)
   y = ViewLine(x, y, "PC $" + Hex4(CpuPC) + "   A $" + Hex2(CpuA) + "   X $" + Hex2(CpuX) + "   Y $" + Hex2(CpuY) + "   S $" + Hex2(CpuS))
   y = ViewLine(x, y, "P  $" + Hex2(p) + " " + row$ + "   IRQ line " + Str(CpuIrqLine) + "   cycles " + Str(CpuCycles))
   y = ViewLine(x, y, "frame " + Str(A2Frames) + "   cycle in frame " + Str(A2FrameCycle) + "   line " + Str(A2FrameCycle / 65), Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
@@ -156,14 +174,22 @@ Procedure ViewCpu(x.f, y.f, w.f, h.f)
   Else
     y = ViewLine(x, y, "click a disassembly line to break there", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
   EndIf
-  y + 6 * s
+  y + Neon_S(6)
   Neon_Text(*Neon_FontSmall, x, y, "DISASSEMBLY", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + lh
   a = CpuPC
   For i = 0 To 19
     line$ = DisLine(a)
     If a = BreakAt : line$ = "* " + line$ : ElseIf i = 0 : line$ = "> " + line$ : Else : line$ = "  " + line$ : EndIf
-    If Neon_MX >= x And Neon_MX < x + w - 24 * s And Neon_MY >= y And Neon_MY < y + lh And Neon_MouseClicked
-      If BreakAt = a : BreakAt = -1 : Else : BreakAt = a : EndIf
+    If i = 0 : CtlSet("dis first row", x, y, w - Neon_S(24), lh) : ElseIf i = 19 : CtlSet("dis last row", x, y, w - Neon_S(24), lh) : EndIf
+    If Neon_MX >= x And Neon_MX < x + w - Neon_S(24) And Neon_MY >= y And Neon_MY < y + lh And Neon_MouseClicked
+      If PtOn
+        PtClicked$ = "dis row " + Str(i)
+        If i = 0 : PtClicked$ = "dis first row" : ElseIf i = 19 : PtClicked$ = "dis last row" : EndIf
+      ElseIf BreakAt = a
+        BreakAt = -1
+      Else
+        BreakAt = a
+      EndIf
     EndIf
     If i = 0
       y = ViewLine(x, y, line$, Neon_C_GrnR, Neon_C_GrnG, Neon_C_GrnB)
@@ -174,7 +200,7 @@ Procedure ViewCpu(x.f, y.f, w.f, h.f)
     EndIf
     a = (a + DisLength(ViewPeekByte(a))) & $FFFF
   Next
-  y + 6 * s
+  y + Neon_S(6)
   Neon_Text(*Neon_FontSmall, x, y, "STACK  $01" + Hex2(CpuS + 1) + " up", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + lh
   row$ = ""
   For i = 1 To 16
@@ -185,9 +211,9 @@ Procedure ViewCpu(x.f, y.f, w.f, h.f)
 EndProcedure
 
 Procedure ViewSwitches(x.f, y.f, w.f, h.f)
-  Protected s.f = UiScale, mode$
+  Protected mode$
   Neon_Panel(x, y, w, h, "Soft switches", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  y + 34 * s : x + 12 * s
+  y + Neon_S(34) : x + Neon_S(12)
   Select VideoLineMode(0)
     Case #VM_TEXT40 : mode$ = "40-column text"
     Case #VM_TEXT80 : mode$ = "80-column text"
@@ -199,40 +225,40 @@ Procedure ViewSwitches(x.f, y.f, w.f, h.f)
   If A2Mixed And A2Text = 0 : mode$ + " with four lines of text" : EndIf
   If VideoPage2() : mode$ + ", page 2" : Else : mode$ + ", page 1" : EndIf
   y = ViewLine(x, y, "Video: " + mode$, Neon_C_GrnR, Neon_C_GrnG, Neon_C_GrnB)
-  y + 4 * s
+  y + Neon_S(4)
   y = ViewLine(x, y, "TEXT     " + ViewOnOff(A2Text) + "   MIXED   " + ViewOnOff(A2Mixed) + "   PAGE2   " + ViewOnOff(A2Page2))
   y = ViewLine(x, y, "HIRES    " + ViewOnOff(A2Hires) + "   80COL   " + ViewOnOff(A2Col80) + "   ALTCHAR " + ViewOnOff(A2AltChar))
   y = ViewLine(x, y, "DHIRES   " + ViewOnOff(A2DHires) + "   IOUDIS  " + ViewOnOff(A2IouDis) + "   VBL int " + ViewOnOff(A2VblEnable))
-  y + 8 * s
+  y + Neon_S(8)
   Neon_Text(*Neon_FontSmall, x, y, "MEMORY (MMU)", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + GLFontLineHeight(*Neon_FontMono)
   y = ViewLine(x, y, "80STORE  " + ViewOnOff(A2Store80) + "   RAMRD   " + ViewOnOff(A2RamRd) + "   RAMWRT  " + ViewOnOff(A2RamWrt))
   y = ViewLine(x, y, "ALTZP    " + ViewOnOff(A2AltZp) + "   ROM bank " + Str(A2RomBank) + " of " + Str(A2RomBytes / 16384))
-  y + 8 * s
+  y + Neon_S(8)
   Neon_Text(*Neon_FontSmall, x, y, "LANGUAGE CARD ($D000-$FFFF)", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + GLFontLineHeight(*Neon_FontMono)
   y = ViewLine(x, y, "read " + StringField("ROM|RAM", A2LcRead + 1, "|") + "   write " + StringField("off (ROM)|RAM", A2LcWrite + 1, "|") + "   $D000 bank " + Str(2 - A2LcBank2) + "   prewrite " + Str(A2LcPrewrite))
-  y + 8 * s
+  y + Neon_S(8)
   Neon_Text(*Neon_FontSmall, x, y, "KEYBOARD", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + GLFontLineHeight(*Neon_FontMono)
   y = ViewLine(x, y, "latch $" + Hex2(A2Key) + "   any key down " + Str(A2KeyDown) + "   queued " + Str(A2KeyPending()) + "   typed " + Str(A2KeyTyped))
   y = ViewLine(x, y, "Open-Apple " + Str(A2OpenApple) + "   Solid-Apple " + Str(A2SolidApple) + "   (Left Alt, Right Alt)")
-  y + 8 * s
+  y + Neon_S(8)
   Neon_Text(*Neon_FontSmall, x, y, "SPEAKER", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + GLFontLineHeight(*Neon_FontMono)
   y = ViewLine(x, y, "clicks " + Str(A2SpeakerClicks) + "   samples " + Str(SoundSamples) + "   queued at the card " + Str(WoQueued) + "   underruns " + Str(WoUnderruns))
 EndProcedure
 
 Procedure ViewMemory(x.f, y.f, w.f, h.f)
-  Protected s.f = UiScale, i.i, p.i, a.i, v.i, row$, asc$
+  Protected i.i, p.i, a.i, v.i, row$, asc$
   Neon_Panel(x, y, w, h, "Memory", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  y + 34 * s : x + 12 * s
-  If Neon_Button(x, y, 100 * s, 22 * s, "CPU's view", Bool(ViewMemBank = 0)) : ViewMemBank = 0 : EndIf
-  If Neon_Button(x + 106 * s, y, 70 * s, 22 * s, "main", Bool(ViewMemBank = 1)) : ViewMemBank = 1 : EndIf
-  If Neon_Button(x + 182 * s, y, 70 * s, 22 * s, "aux", Bool(ViewMemBank = 2)) : ViewMemBank = 2 : EndIf
-  If Neon_Button(x + 270 * s, y, 28 * s, 22 * s, "<") : ViewMemPage = (ViewMemPage - 1) & 255 : EndIf
-  If Neon_Button(x + 302 * s, y, 28 * s, 22 * s, ">") : ViewMemPage = (ViewMemPage + 1) & 255 : EndIf
-  If Neon_Button(x + 336 * s, y, 36 * s, 22 * s, "zp") : ViewMemPage = 0 : EndIf
-  If Neon_Button(x + 376 * s, y, 44 * s, 22 * s, "text") : ViewMemPage = 4 : EndIf
-  If Neon_Button(x + 424 * s, y, 50 * s, 22 * s, "hires") : ViewMemPage = $20 : EndIf
-  If Neon_Button(x + 478 * s, y, 36 * s, 22 * s, "PC") : ViewMemPage = CpuPC >> 8 : EndIf
-  y + 30 * s
+  y + Neon_S(34) : x + Neon_S(12)
+  If Btn("mem cpu", x, y, Neon_S(100), Neon_S(22), "CPU's view", Bool(ViewMemBank = 0)) : ViewMemBank = 0 : EndIf
+  If Btn("mem main", x + Neon_S(106), y, Neon_S(70), Neon_S(22), "main", Bool(ViewMemBank = 1)) : ViewMemBank = 1 : EndIf
+  If Btn("mem aux", x + Neon_S(182), y, Neon_S(70), Neon_S(22), "aux", Bool(ViewMemBank = 2)) : ViewMemBank = 2 : EndIf
+  If Btn("mem back", x + Neon_S(270), y, Neon_S(28), Neon_S(22), "<") : ViewMemPage = (ViewMemPage - 1) & 255 : EndIf
+  If Btn("mem next", x + Neon_S(302), y, Neon_S(28), Neon_S(22), ">") : ViewMemPage = (ViewMemPage + 1) & 255 : EndIf
+  If Btn("mem zp", x + Neon_S(336), y, Neon_S(36), Neon_S(22), "zp") : ViewMemPage = 0 : EndIf
+  If Btn("mem text", x + Neon_S(376), y, Neon_S(44), Neon_S(22), "text") : ViewMemPage = 4 : EndIf
+  If Btn("mem hires", x + Neon_S(424), y, Neon_S(50), Neon_S(22), "hires") : ViewMemPage = $20 : EndIf
+  If Btn("mem PC", x + Neon_S(478), y, Neon_S(36), Neon_S(22), "PC") : ViewMemPage = CpuPC >> 8 : EndIf
+  y + Neon_S(30)
   y = ViewLine(x, y, "page $" + Hex2(ViewMemPage) + "00   " + StringField("as the CPU reads it now|main bank|auxiliary bank", ViewMemBank + 1, "|"), Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
   For i = 0 To 15
     a = ViewMemPage * 256 + i * 16
@@ -253,21 +279,21 @@ EndProcedure
 Declare ViewDiskInsert(drive.i)
 
 Procedure ViewDisk(x.f, y.f, w.f, h.f)
-  Protected s.f = UiScale, d.i, kind$, name$
+  Protected d.i, kind$, name$
   Neon_Panel(x, y, w, h, "Disk drives (IWM)", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  y + 34 * s : x + 12 * s
+  y + Neon_S(34) : x + Neon_S(12)
   For d = 1 To 2
     kind$ = StringField("empty|DOS order|ProDOS order|nibble tracks", DiskKind(d) + 1, "|")
     name$ = GetFilePart(HostDiskPath$(d)) : If name$ = "" : name$ = "(no disk)" : EndIf
     Neon_Text(*Neon_FontSmall, x, y, "DRIVE " + Str(d) + StringField("| (built in)| (external)", d + 1, "|"), Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB)
-    If Neon_Button(x + 220 * s, y - 2 * s, 80 * s, 22 * s, "Insert...") : ViewDiskInsert(d) : EndIf
-    If Neon_Button(x + 306 * s, y - 2 * s, 70 * s, 22 * s, "Eject") : HostEjectDisk(d) : EndIf
-    If Neon_Button(x + 382 * s, y - 2 * s, 70 * s, 22 * s, "Save", HostDiskDirty(d)) : HostSaveDisk(d) : EndIf
-    y + 26 * s
+    If Btn("insert " + Str(d), x + Neon_S(220), y - Neon_S(2), Neon_S(80), Neon_S(22), "Insert...") : ViewDiskInsert(d) : EndIf
+    If Btn("eject " + Str(d), x + Neon_S(306), y - Neon_S(2), Neon_S(70), Neon_S(22), "Eject") : HostEjectDisk(d) : EndIf
+    If Btn("save " + Str(d), x + Neon_S(382), y - Neon_S(2), Neon_S(70), Neon_S(22), "Save", HostDiskDirty(d)) : HostSaveDisk(d) : EndIf
+    y + Neon_S(26)
     y = ViewLine(x, y, name$ + "   " + kind$)
     If HostDiskNote$(d) <> "" : y = ViewLine(x, y, HostDiskNote$(d), Neon_C_DimR, Neon_C_DimG, Neon_C_DimB) : EndIf
     y = ViewLine(x, y, "head: track " + Str(DiskHalf(d) >> 1) + StringField("|.5", (DiskHalf(d) & 1) + 1, "|") + "   write-protected " + Str(DiskProtect(d)) + "   changed, not saved " + Str(HostDiskDirty(d)))
-    y + 8 * s
+    y + Neon_S(8)
   Next
   Neon_Text(*Neon_FontSmall, x, y, "THE IWM", Neon_C_AmbR, Neon_C_AmbG, Neon_C_AmbB) : y + GLFontLineHeight(*Neon_FontMono)
   y = ViewLine(x, y, "drive " + Str(DiskDrive) + "   motor " + ViewOnOff(DiskMotor) + "   phases %" + RSet(Bin(DiskPhases), 4, "0") + "   Q6 " + Str(DiskQ6) + "  Q7 " + Str(DiskQ7) + "   mode $" + Hex2(DiskMode))
@@ -278,14 +304,14 @@ EndProcedure
 Declare ViewRunTests()
 
 Procedure ViewTests(x.f, y.f, w.f, h.f)
-  Protected s.f = UiScale, i.i
+  Protected i.i
   Neon_Panel(x, y, w, h, "Tests", Neon_C_AccR, Neon_C_AccG, Neon_C_AccB)
-  y + 34 * s : x + 12 * s
+  y + Neon_S(34) : x + Neon_S(12)
   y = ViewLine(x, y, "The 65C02 core's suites, the same as apple2c_cpu_check.exe and the boards':")
   y = ViewLine(x, y, "SingleStepTests rockwell65c02 (87053 vectors), Klaus Dormann's 65C02", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
   y = ViewLine(x, y, "extended opcodes test and his 6502 functional test.", Neon_C_DimR, Neon_C_DimG, Neon_C_DimB)
-  If Neon_Button(x, y + 4 * s, 140 * s, 26 * s, "Run the tests") : ViewRunTests() : EndIf
-  y + 40 * s
+  If Btn("run tests", x, y + Neon_S(4), Neon_S(140), Neon_S(26), "Run the tests") : ViewRunTests() : EndIf
+  y + Neon_S(40)
   For i = 1 To CountString(ViewTestResult$, #LF$) + 1
     If ViewTestFailed
       y = ViewLine(x, y, StringField(ViewTestResult$, i, #LF$), Neon_C_RedR, Neon_C_RedG, Neon_C_RedB)

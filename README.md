@@ -236,7 +236,8 @@ desktop\PureMetalAppleIIc.exe --rom <your IIc ROM> --disk1 <a disk image>
 The first runs this project's test ROM and boots the PureMetal demo; the second your own IIc ROM and disk.
 
 Options: `--rom file`, `--disk1 file`, `--disk2 file`, `--mono`, `--mute`, `--type TEXT` (typed after start),
-`--shot file.png --seconds N` (saves the window and closes). Without `--rom` the test ROM runs.
+`--shot file.png --seconds N` (saves the window and closes), `--pointer-test file` (see Testing). Without
+`--rom` the test ROM runs.
 
 Keys: typing goes to the IIc; Left Alt / Right Alt are Open-Apple / Solid-Apple; Ctrl+F12 is Ctrl+Reset,
 Ctrl+Alt+F12 a cold start; F5 run/pause, F6 step one instruction, F7 one frame, F9 full speed, F11 full
@@ -255,6 +256,7 @@ screen. Click a disassembly line to break there.
 | Pico W, Pico 2 W | 3,072 vectors and both Klaus tests on silicon | `tools/board.ps1 -Port COM7 -Source rp2040/Diagnostics/cpu_verify.picow -Output build/cpu_verify.uf2 -Seconds 90` |
 | PC | the test ROM's memory checks | `apple2c_check.exe --frames 60 --expect "ALL PASS"` |
 | PC | the test disk: boot, all 544 sectors of tracks 1-34 | `apple2c_check.exe --disk1 build\testdisk.dsk --frames 4000 --type-at 30 D --expect "544 SECTORS PASS"` |
+| PC | the window's controls and the pointer agree at the display's scale: four synthetic points on each of 33 controls (inside two corners, just right of and just below), top to bottom, the real pointer never moved; exit code = failures | `desktop\PureMetalAppleIIc.exe --pointer-test pointer.txt` |
 | PC | every column span of every line drawn alone equals the whole line | `apple2c_check.exe --frames 400 --type-at 200 4 --span-check` |
 | Pico W, Pico 2 W | the test ROM, every mode captured | `tests/testrom.txt` with `*/apple2c.*` |
 | Pico W, Pico 2 W | the test disk | `tests/diskboot.txt` with `*/Diagnostics/disk_boot.*` |
