@@ -612,7 +612,7 @@ Procedure Main()
             Select et
               Case #PB_EventType_KeyDown
                 k = GetGadgetAttribute(Gl, #PB_OpenGL_Modifiers)
-                KeyDown(GetGadgetAttribute(Gl, #PB_OpenGL_Key), Bool(k & #PB_OpenGL_Control) | (Bool(k & #PB_OpenGL_Alt) << 1))
+                KeyDown(GL_KeyEventCode(GetGadgetAttribute(Gl, #PB_OpenGL_Key)),Bool(k & #PB_OpenGL_Control) | (Bool(k & #PB_OpenGL_Alt) << 1))
               Case #PB_EventType_Input
                 k = GetGadgetAttribute(Gl, #PB_OpenGL_Input)
                 If k >= 32 And k < 127 : A2KeyPut(k) : EndIf
