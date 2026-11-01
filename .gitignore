@@ -19,6 +19,9 @@ build/
 *.log
 *.err
 desktop/*.exe
+desktop/PureMetalAppleIIc
+desktop/apple2c_check
+desktop/apple2c_cpu_check
 __pycache__/
 
 # the demo's build output (PureMetalForge writes them beside the source)

@@ -31,7 +31,7 @@ Procedure.q CountInstructions(file$, success.i)
 EndProcedure
 
 OpenConsole()
-Define dir$ = GetPathPart(ProgramFilename()) + "..\Diagnostics\", i.i, best.q, pc.i, instr.q, name$
+Define dir$ = GetPathPart(ProgramFilename()) + "../Diagnostics/", i.i, best.q, pc.i, instr.q, name$
 CompilerIf #BENCH_PROCS : name$ = "procedure table" : CompilerElse : name$ = "computed goto" : CompilerEndIf
 instr = CountInstructions(dir$ + "6502_functional_test.bin", $3469)
 best = 1 << 40

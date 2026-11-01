@@ -46,7 +46,7 @@ For k = 0 To CountProgramParameters() - 1
 Next
 
 If cpuTests
-  PrintN(CtAllTests(GetPathPart(ProgramFilename()) + "..\Diagnostics\"))
+  PrintN(CtAllTests(GetPathPart(ProgramFilename()) + "../Diagnostics/"))
 EndIf
 
 A2MemInit()

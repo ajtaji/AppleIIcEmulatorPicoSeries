@@ -44,13 +44,11 @@ Procedure ViewTextureMake(*t.ViewTexture, w.i, h.i)
   glTexImage2D_(#GL_TEXTURE_2D, 0, #GL_RGBA, w, h, 0, #GL_RGBA, #GL_UNSIGNED_BYTE, *t\pixels)
 EndProcedure
 
-; The engine's sprite draw samples a Windows texture bottom-up (its images come from DIBs).
+; The row order the engine's sprite draw samples a texture filled from memory in (#GL_SpriteRowsBottomUp:
+; bottom-up on Windows, where its images come from DIBs; top-down on Linux).
 Procedure.i ViewRow(*t.ViewTexture, y.i)
-  CompilerIf #PB_Compiler_OS = #PB_OS_Windows
-    ProcedureReturn *t\pixels + (*t\sprite\Height - 1 - y) * *t\sprite\Width * 4
-  CompilerElse
-    ProcedureReturn *t\pixels + y * *t\sprite\Width * 4
-  CompilerEndIf
+  If #GL_SpriteRowsBottomUp : y = *t\sprite\Height - 1 - y : EndIf
+  ProcedureReturn *t\pixels + y * *t\sprite\Width * 4
 EndProcedure
 
 Procedure ViewInit()

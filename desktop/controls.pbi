@@ -56,8 +56,8 @@ Procedure ControlsInit()
   CtlAdd(#CTL_KEY, #PB_Shortcut_Tab, "Tab", "TAB", $09)
   CtlAdd(#CTL_KEY, #PB_Shortcut_Delete, "Delete", "DELETE", $7F)
   CtlAdd(#CTL_NOTE, 0, "Ctrl + a letter", "CONTROL + the letter")
-  CtlAdd(#CTL_APPLE, #VK_LMENU, "Left Alt", "Open-Apple (and joystick button 0)", 1)
-  CtlAdd(#CTL_APPLE, #VK_RMENU, "Right Alt", "Solid-Apple (and joystick button 1)", 2)
+  CtlAdd(#CTL_APPLE, #GL_Key_AltLeft, "Left Alt", "Open-Apple (and joystick button 0)", 1)
+  CtlAdd(#CTL_APPLE, #GL_Key_AltRight, "Right Alt", "Solid-Apple (and joystick button 1)", 2)
   ; the joystick
   CtlAdd(#CTL_NOTE, 0, "Joystick, paddles, gamepad", "not emulated (no paddle inputs); the two buttons are the Alt keys")
   ; the window

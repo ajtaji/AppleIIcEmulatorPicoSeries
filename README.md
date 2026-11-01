@@ -3,7 +3,7 @@
 An Apple IIc emulator for the Raspberry Pi Pico W (RP2040) and Pico 2 W (RP2350), written in PureMetal and
 compiled with PureMetalForge to bare-metal machine code - no SDK, no RTOS. The 65C02 runs on one core at the
 IIc's own 59.92 frames a second; the other core draws the picture on a 480 x 320 SPI panel at the same rate
-and keeps the Bluetooth radio going. The same machine also runs as a Windows desktop program with debug
+and keeps the Bluetooth radio going. The same machine also runs as a desktop program for Windows and Linux with debug
 panes, built from the same source files.
 
 ![The PureMetal demo on the Pico's panel (the firmware's own capture)](docs/images/pico-demo.png)
@@ -37,7 +37,7 @@ written in PureMetal.
   panel's hi-res drawing, are Cortex-M33 (Thumb-2) assembly; the RP2040 uses Cortex-M0+ (Thumb-1) where
   it measured faster. Each is checked against plain PureMetal on silicon.
 - **Sound** on a Bluetooth speaker in a build that names one; on the desktop, through the PC's sound.
-- **Desktop version** for Windows - the same machine files, drawn with the
+- **Desktop version** for Windows and Linux, from one source - the same machine files, drawn with the
   [Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): ROM and disk pickers,
   CPU (with disassembly and breakpoints), switches, memory, disk and test panes, single step, full speed.
 
@@ -209,9 +209,11 @@ Generated sources, all reproducible: `tools/gen_cpu.py` (the 65C02 core for both
 
 ### Building the desktop version
 
-You need PureBasic 6.41 (x64, C back end) on Windows. The window is drawn by the
-[Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine): clone it beside this
-repository (the two folders side by side), from PowerShell:
+You need PureBasic 6.41 (x64, C back end) on Windows or Linux. The window is drawn by the
+[Neon Arcade Display Engine](https://github.com/ajtaji/Neon-Arcade-Dispay-Engine), and everything the
+program needs from the operating system (the window, the clock, keys held, full screen, the pointer, the
+sound card) comes through it, so the same source builds on both. Clone it beside this repository (the two
+folders side by side). On Windows, from PowerShell:
 
 ```
 git clone https://github.com/ajtaji/AppleIIcEmulatorPicoSeries.git
@@ -226,6 +228,22 @@ The program finds the engine at `../Neon-Arcade-Dispay-Engine/` beside the repos
 somewhere else, add `/CONSTANT GL_ENGINE_DIR$=<path to the engine>/` to the first command (the trailing slash
 matters). `apple2c_check.exe` and `apple2c_cpu_check.exe` do not use the engine.
 
+On Linux (x64; X11, or Wayland with XWayland; GTK 3, OpenGL and ALSA), with `PUREBASIC_HOME` set to the
+PureBasic folder:
+
+```
+git clone https://github.com/ajtaji/AppleIIcEmulatorPicoSeries.git
+git clone https://github.com/ajtaji/Neon-Arcade-Dispay-Engine.git
+cd AppleIIcEmulatorPicoSeries
+$PUREBASIC_HOME/compilers/pbcompilerc desktop/apple2c_desktop.pb -t -z -o desktop/PureMetalAppleIIc
+$PUREBASIC_HOME/compilers/pbcompilerc desktop/apple2c_check.pb -z -o desktop/apple2c_check
+$PUREBASIC_HOME/compilers/pbcompilerc desktop/cpu_check.pb -z -o desktop/apple2c_cpu_check
+```
+
+`pbcompilerc` is the C back end (`pbcompiler`, the assembler one, cannot build the 65C02 core). With the
+engine somewhere else, add `-co GL_ENGINE_DIR$=<path to the engine>/`. Build from a Linux file system: under
+WSL, PureBasic reading the sources from `/mnt/c` includes a file twice.
+
 ### Running it
 
 ```
@@ -234,6 +252,8 @@ desktop\PureMetalAppleIIc.exe --rom <your IIc ROM> --disk1 <a disk image>
 ```
 
 The first runs this project's test ROM and boots the PureMetal demo; the second your own IIc ROM and disk.
+On Linux the same, as `desktop/PureMetalAppleIIc --disk1 demo/apple2c_demo.dsk --type D`; the sound goes to
+ALSA's `default` device, and without one the program runs silent.
 
 Options: `--rom file`, `--disk1 file`, `--disk2 file`, `--mono`, `--mute`, `--type TEXT` (typed after start),
 `--shot file.png --seconds N` (saves the window and closes), `--pointer-test file` and
@@ -300,7 +320,7 @@ and **End** is the IIc's ESC there (and always). Click a disassembly line in the
 | PC | the test ROM's memory checks | `apple2c_check.exe --frames 60 --expect "ALL PASS"` |
 | PC | the test disk: boot, all 544 sectors of tracks 1-34 | `apple2c_check.exe --disk1 build\testdisk.dsk --frames 4000 --type-at 30 D --expect "544 SECTORS PASS"` |
 | PC | the window's controls and the pointer agree at the display's scale: four synthetic points on each of 33 controls (inside two corners, just right of and just below), top to bottom, the real pointer never moved; exit code = failures | `desktop\PureMetalAppleIIc.exe --pointer-test pointer.txt` |
-| PC | full screen by its own keys (posted to the window, the real keyboard and pointer unused): Esc and End are the IIc's ESC in the window; F11 covers the window's monitor with the picture at 4:3, as large as fits, centred, the machine at its own rate; End is ESC there, Esc leaves and is not ESC; the window's rectangle and style come back exactly; exit code = failures | `desktop\PureMetalAppleIIc.exe --fullscreen-test fullscreen.txt` |
+| PC | full screen by its own keys (into the window's key handler, the real keyboard and pointer unused): Esc and End are the IIc's ESC in the window; F11 covers the window's monitor with the picture at 4:3, as large as fits, centred, the machine at its own rate; End is ESC there, Esc leaves and is not ESC; the window's rectangle and client size come back exactly; exit code = failures | `desktop\PureMetalAppleIIc.exe --fullscreen-test fullscreen.txt` |
 | PC | the README's Controls section is the controls table | `py -3 tools/controls_readme.py --check` |
 | PC | every column span of every line drawn alone equals the whole line | `apple2c_check.exe --frames 400 --type-at 200 4 --span-check` |
 | Pico W, Pico 2 W | the test ROM, every mode captured | `tests/testrom.txt` with `*/apple2c.*` |
@@ -335,7 +355,7 @@ diagnostic, not the emulator.
 src/        the machine: 65C02 core (generated), memory and switches, video, disk, sound, the panel
 rp2040/     the Pico W build and its diagnostics (CPU check, test disk, demo)
 rp2350/     the Pico 2 W build and its diagnostics
-desktop/    the Windows program, the headless checker, the CPU check
+desktop/    the desktop program (Windows and Linux), the headless checker, the CPU check
 demo/       the PureMetal demo: its generator, source and disk
 firmware/   ROM-free firmware images (SHA256SUMS.txt)
 tests/      scripts for tools/board.py, run against a board

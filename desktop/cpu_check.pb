@@ -9,7 +9,7 @@ EndProcedure
 XIncludeFile "cpu_tests.pbi"
 
 OpenConsole()
-Define folder$ = "Diagnostics\"
+Define folder$ = "Diagnostics/"
 If CountProgramParameters() > 0 : folder$ = ProgramParameter(0) : EndIf
 PrintN(CtAllTests(folder$))
 If CtVectorFails Or Left(CtKlausResult$, 4) <> "PASS" Or Left(CtKlaus6502Result$, 4) <> "PASS"
